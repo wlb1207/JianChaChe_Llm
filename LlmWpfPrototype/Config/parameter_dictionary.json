@@ -1,0 +1,158 @@
+[
+  {
+    "name": "truss_top_chord_section_spec",
+    "display_name": "桁架上弦杆截面",
+    "aliases": [
+      "桁架上弦杆截面",
+      "上弦杆截面",
+      "上弦杆截面规格",
+      "桁架上弦杆截面规格"
+    ],
+    "category": "truss_top_chord",
+    "unit": "mm",
+    "default_value": "80x80x4",
+    "min_value": null,
+    "max_value": null,
+    "description": "用于描述桁架上弦杆的统一截面规格，格式为 宽×高×壁厚。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_bottom_chord_section_spec",
+    "display_name": "桁架下弦杆截面",
+    "aliases": [
+      "桁架下弦杆截面",
+      "下弦杆截面",
+      "下弦杆截面规格",
+      "桁架下弦杆截面规格"
+    ],
+    "category": "truss_bottom_chord",
+    "unit": "mm",
+    "default_value": "100x100x5",
+    "min_value": null,
+    "max_value": null,
+    "description": "用于描述桁架下弦杆的统一截面规格，格式为 宽×高×壁厚。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_unified_chord_section_spec",
+    "display_name": "上下弦杆统一截面规格",
+    "aliases": [
+      "上下弦杆统一截面规格",
+      "上下弦杆截面规格",
+      "上下弦杆统一截面",
+      "上下弦杆统一规格"
+    ],
+    "category": "truss_chord_shared",
+    "unit": "mm",
+    "default_value": "80x80x4",
+    "min_value": null,
+    "max_value": null,
+    "description": "用于同时描述上弦杆和下弦杆的统一截面规格，格式为 宽×高×壁厚。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_top_chord_section_width",
+    "display_name": "上弦杆截面宽度",
+    "aliases": [
+      "上弦杆截面宽度",
+      "桁架上弦杆截面宽度",
+      "上弦杆宽度"
+    ],
+    "category": "truss_top_chord",
+    "unit": "mm",
+    "default_value": "80",
+    "min_value": 20,
+    "max_value": 500,
+    "description": "桁架上弦杆截面的宽度参数。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_top_chord_section_height",
+    "display_name": "上弦杆截面高度",
+    "aliases": [
+      "上弦杆截面高度",
+      "桁架上弦杆截面高度",
+      "上弦杆高度"
+    ],
+    "category": "truss_top_chord",
+    "unit": "mm",
+    "default_value": "80",
+    "min_value": 20,
+    "max_value": 500,
+    "description": "桁架上弦杆截面的高度参数。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_top_chord_wall_thickness",
+    "display_name": "上弦杆壁厚",
+    "aliases": [
+      "上弦杆壁厚",
+      "桁架上弦杆壁厚",
+      "上弦杆厚度"
+    ],
+    "category": "truss_top_chord",
+    "unit": "mm",
+    "default_value": "4",
+    "min_value": 1,
+    "max_value": 40,
+    "description": "桁架上弦杆壁厚参数。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_bottom_chord_section_width",
+    "display_name": "下弦杆截面宽度",
+    "aliases": [
+      "下弦杆截面宽度",
+      "桁架下弦杆截面宽度",
+      "下弦杆宽度"
+    ],
+    "category": "truss_bottom_chord",
+    "unit": "mm",
+    "default_value": "100",
+    "min_value": 20,
+    "max_value": 500,
+    "description": "桁架下弦杆截面的宽度参数。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_bottom_chord_section_height",
+    "display_name": "下弦杆截面高度",
+    "aliases": [
+      "下弦杆截面高度",
+      "桁架下弦杆截面高度",
+      "下弦杆高度"
+    ],
+    "category": "truss_bottom_chord",
+    "unit": "mm",
+    "default_value": "100",
+    "min_value": 20,
+    "max_value": 500,
+    "description": "桁架下弦杆截面的高度参数。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  },
+  {
+    "name": "truss_bottom_chord_wall_thickness",
+    "display_name": "下弦杆壁厚",
+    "aliases": [
+      "下弦杆壁厚",
+      "桁架下弦杆壁厚",
+      "下弦杆厚度"
+    ],
+    "category": "truss_bottom_chord",
+    "unit": "mm",
+    "default_value": "5",
+    "min_value": 1,
+    "max_value": 40,
+    "description": "桁架下弦杆壁厚参数。",
+    "solidworks_targets": [],
+    "apdl_replacements": []
+  }
+]

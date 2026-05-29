@@ -1,0 +1,4 @@
+root = true
+
+[*.{cs,xaml,json,resx,txt,md}]
+charset = utf-8-bom

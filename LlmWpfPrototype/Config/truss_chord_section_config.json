@@ -1,0 +1,72 @@
+{
+  "section_spec_delimiters": [
+    "x",
+    "X",
+    "×"
+  ],
+  "composite_parameters": [
+    {
+      "composite_parameter_name": "truss_top_chord_section_spec",
+      "targets": [
+        {
+          "parameter_name": "truss_top_chord_section_width",
+          "value_index": 0
+        },
+        {
+          "parameter_name": "truss_top_chord_section_height",
+          "value_index": 1
+        },
+        {
+          "parameter_name": "truss_top_chord_wall_thickness",
+          "value_index": 2
+        }
+      ]
+    },
+    {
+      "composite_parameter_name": "truss_bottom_chord_section_spec",
+      "targets": [
+        {
+          "parameter_name": "truss_bottom_chord_section_width",
+          "value_index": 0
+        },
+        {
+          "parameter_name": "truss_bottom_chord_section_height",
+          "value_index": 1
+        },
+        {
+          "parameter_name": "truss_bottom_chord_wall_thickness",
+          "value_index": 2
+        }
+      ]
+    },
+    {
+      "composite_parameter_name": "truss_unified_chord_section_spec",
+      "targets": [
+        {
+          "parameter_name": "truss_top_chord_section_width",
+          "value_index": 0
+        },
+        {
+          "parameter_name": "truss_top_chord_section_height",
+          "value_index": 1
+        },
+        {
+          "parameter_name": "truss_top_chord_wall_thickness",
+          "value_index": 2
+        },
+        {
+          "parameter_name": "truss_bottom_chord_section_width",
+          "value_index": 0
+        },
+        {
+          "parameter_name": "truss_bottom_chord_section_height",
+          "value_index": 1
+        },
+        {
+          "parameter_name": "truss_bottom_chord_wall_thickness",
+          "value_index": 2
+        }
+      ]
+    }
+  ]
+}

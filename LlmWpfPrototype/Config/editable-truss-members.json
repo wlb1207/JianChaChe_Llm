@@ -1,0 +1,137 @@
+{
+  "EditableTrussMembers": [
+    {
+      "Id": "upper_chord",
+      "Name": "桁架上弦杆截面",
+      "Aliases": [
+        "上弦杆",
+        "上部弦杆",
+        "桁架上弦",
+        "上弦杆截面",
+        "上部主弦杆",
+        "上部桁架弦杆"
+      ],
+      "Description": "控制桁架上弦杆的截面规格。",
+      "MemberRole": "UpperChord",
+      "SectionType": "ClosedRectangularSection",
+      "SectionModelingMode": "ThinFeature",
+      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\4-方管70×70×5-1603.SLDPRT",
+      "ComponentName": "4-方管70×70×5-1603-1",
+      "WidthDimensionName": "D1@草图2@4-方管70×70×5-1603.Part",
+      "HeightDimensionName": "D2@草图2@4-方管70×70×5-1603.Part",
+      "ThicknessDimensionName": "D5@拉伸-薄壁1@4-方管70×70×5-1603.Part",
+      "PartMappings": [
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\4-方管70×70×5-1603.SLDPRT",
+          "ComponentName": "4-方管70×70×5-1603-1",
+          "WidthDimensionName": "D1@草图2@4-方管70×70×5-1603.Part",
+          "HeightDimensionName": "D2@草图2@4-方管70×70×5-1603.Part",
+          "ThicknessDimensionName": "D5@拉伸-薄壁1@4-方管70×70×5-1603.Part",
+          "InnerWidthDimensionName": "",
+          "InnerHeightDimensionName": ""
+        },
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\5-方管70×70×5-6000.SLDPRT",
+          "ComponentName": "5-方管70×70×5-6000-1",
+          "WidthDimensionName": "D1@草图1@5-方管70×70×5-6000.Part",
+          "HeightDimensionName": "D2@草图1@5-方管70×70×5-6000.Part",
+          "ThicknessDimensionName": "D5@拉伸-薄壁1@5-方管70×70×5-6000.Part",
+          "InnerWidthDimensionName": "",
+          "InnerHeightDimensionName": ""
+        },
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\2-方管70×70×5-379.SLDPRT",
+          "ComponentName": "2-方管70×70×5-379-1",
+          "InnerWidthValueMode": "OuterMinusTwoThickness",
+          "InnerHeightValueMode": "OuterMinusTwoThickness",
+          "InnerWidthOuterParameterKey": "upper_chord.section_width",
+          "InnerHeightOuterParameterKey": "upper_chord.section_height",
+          "InnerWidthThicknessParameterKey": "upper_chord.wall_thickness",
+          "InnerHeightThicknessParameterKey": "upper_chord.wall_thickness",
+          "WidthDimensionName": "D3@草图1@2-方管70×70×5-379.Part",
+          "HeightDimensionName": "D1@凸台-拉伸1@2-方管70×70×5-379.Part",
+          "ThicknessDimensionName": "",
+          "InnerWidthDimensionName": "D1@草图2@2-方管70×70×5-379.Part",
+          "InnerHeightDimensionName": "D2@草图2@2-方管70×70×5-379.Part"
+        },
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\2-方管70×70×5-1202.SLDPRT",
+          "ComponentName": "2-方管70×70×5-1202-1",
+          "WidthDimensionName": "D1@草图1@2-方管70×70×5-1202.Part",
+          "HeightDimensionName": "D2@草图1@2-方管70×70×5-1202.Part",
+          "ThicknessDimensionName": "D5@拉伸-薄壁1@2-方管70×70×5-1202.Part",
+          "InnerWidthDimensionName": "D1@草图2@2-方管70×70×5-1202.Part",
+          "InnerHeightDimensionName": "D2@草图2@2-方管70×70×5-1202.Part"
+        }
+      ],
+      "Unit": "mm",
+      "MinWidth": 40,
+      "MaxWidth": 200,
+      "MinHeight": 40,
+      "MaxHeight": 200,
+      "MinThickness": 2,
+      "MaxThickness": 12,
+      "Example": "把桁架上弦杆截面改成 80x80x4",
+      "Enabled": true
+    },
+    {
+      "Id": "lower_chord",
+      "Name": "桁架下弦杆截面",
+      "Aliases": [
+        "下弦杆",
+        "下部弦杆",
+        "桁架下弦",
+        "下弦杆截面",
+        "下部主弦杆",
+        "下部桁架弦杆"
+      ],
+      "Description": "控制桁架下弦杆的截面规格。",
+      "MemberRole": "LowerChord",
+      "SectionType": "ClosedRectangularSection",
+      "SectionModelingMode": "ThinFeature",
+      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\34-方管70×70×5×6575.SLDPRT",
+      "ComponentName": "34-方管70×70×5×6575-1",
+      "WidthDimensionName": "D1@草图1@34-方管70×70×5×6575.Part",
+      "HeightDimensionName": "D2@草图1@34-方管70×70×5×6575.Part",
+      "ThicknessDimensionName": "D5@拉伸-薄壁1@34-方管70×70×5×6575.Part",
+      "PartMappings": [
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\34-方管70×70×5×6575.SLDPRT",
+          "ComponentName": "34-方管70×70×5×6575-1",
+          "WidthDimensionName": "D1@草图1@34-方管70×70×5×6575.Part",
+          "HeightDimensionName": "D2@草图1@34-方管70×70×5×6575.Part",
+          "ThicknessDimensionName": "D5@拉伸-薄壁1@34-方管70×70×5×6575.Part",
+          "InnerWidthDimensionName": "",
+          "InnerHeightDimensionName": ""
+        },
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\33-方管70×70×5×838.SLDPRT",
+          "ComponentName": "33-方管70×70×5×838-1",
+          "WidthDimensionName": "D1@草图1@33-方管70×70×5×838.Part",
+          "HeightDimensionName": "D2@草图1@33-方管70×70×5×838.Part",
+          "ThicknessDimensionName": "D5@拉伸-薄壁1@33-方管70×70×5×838.Part",
+          "InnerWidthDimensionName": "",
+          "InnerHeightDimensionName": ""
+        },
+        {
+          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\10-方管70×70×5-6375.SLDPRT",
+          "ComponentName": "10-方管70×70×5-6375-1",
+          "WidthDimensionName": "D1@草图1@10-方管70×70×5-6375.Part",
+          "HeightDimensionName": "D2@草图1@10-方管70×70×5-6375.Part",
+          "ThicknessDimensionName": "D5@拉伸-薄壁1@10-方管70×70×5-6375.Part",
+          "InnerWidthDimensionName": "",
+          "InnerHeightDimensionName": ""
+        }
+      ],
+      "Unit": "mm",
+      "MinWidth": 40,
+      "MaxWidth": 200,
+      "MinHeight": 40,
+      "MaxHeight": 200,
+      "MinThickness": 2,
+      "MaxThickness": 12,
+      "Example": "把桁架下弦杆截面改成 100x100x5",
+      "Enabled": true
+    }
+  ]
+}
