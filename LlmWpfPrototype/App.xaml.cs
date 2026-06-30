@@ -1,12 +1,13 @@
 using System.IO;
 using System.Text;
 using System.Windows;
+using LlmWpfPrototype.Services;
 
 namespace LlmWpfPrototype;
 
 public partial class App : System.Windows.Application
 {
-    private static readonly string LogDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+    private static readonly string LogDirectory = AppPaths.LogsDirectory;
     private static readonly string StartupLogPath = Path.Combine(LogDirectory, "startup.log");
 
     protected override void OnStartup(StartupEventArgs e)

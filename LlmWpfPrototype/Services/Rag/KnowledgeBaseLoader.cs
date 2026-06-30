@@ -37,19 +37,7 @@ public sealed class KnowledgeBaseLoader
 
     public string ResolveRagIndexPath()
     {
-        var baseCandidate = Path.Combine(AppContext.BaseDirectory, RagIndexRelativePath);
-        if (File.Exists(baseCandidate))
-        {
-            return baseCandidate;
-        }
-
-        var projectRoot = TryFindProjectRoot();
-        if (!string.IsNullOrWhiteSpace(projectRoot))
-        {
-            return Path.Combine(projectRoot, RagIndexRelativePath);
-        }
-
-        return baseCandidate;
+        return Path.Combine(AppPaths.DataDirectory, "rag_index.json");
     }
 
     public bool TryLoadKnowledgeBaseText(out string text, out string errorMessage)

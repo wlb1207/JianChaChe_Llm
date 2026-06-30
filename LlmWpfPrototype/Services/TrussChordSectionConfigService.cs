@@ -19,7 +19,7 @@ public sealed class TrussChordSectionConfigService
 
     public TrussChordSectionConfigService()
     {
-        _configPath = Path.Combine(AppContext.BaseDirectory, "Config", "truss_chord_section_config.json");
+        _configPath = AppPaths.GetBundledConfigPath("truss_chord_section_config.json");
     }
 
     public bool ConfigExists()

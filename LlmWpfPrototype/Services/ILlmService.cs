@@ -34,6 +34,10 @@ public sealed class LlmResponseParseException : InvalidOperationException
     public string RawResponsePreview { get; }
 }
 
+public sealed record LlmChatRequestOptions(
+    bool ReplyOnlyMode = false,
+    string? IntentLabel = null);
+
 public interface ILlmService
 {
     event Action<string>? DiagnosticLogEmitted;
@@ -41,6 +45,7 @@ public interface ILlmService
     Task<string> ParseDesignRequirementAsync(
         string userInput,
         IReadOnlyList<ConversationMessage>? conversationHistory = null,
+        LlmChatRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default);
 
     Task<LlmConnectionTestResult> TestConnectionAsync(string userInput, CancellationToken cancellationToken = default);

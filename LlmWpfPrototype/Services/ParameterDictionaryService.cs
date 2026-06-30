@@ -20,7 +20,7 @@ public sealed class ParameterDictionaryService
     public ParameterDictionaryService(TrussChordSectionConfigService trussChordSectionConfigService)
     {
         _trussChordSectionConfigService = trussChordSectionConfigService;
-        _dictionaryPath = Path.Combine(AppContext.BaseDirectory, "Config", "parameter_dictionary.json");
+        _dictionaryPath = AppPaths.GetBundledConfigPath("parameter_dictionary.json");
     }
 
     public IReadOnlyList<ParameterDefinition> LoadDefinitions()

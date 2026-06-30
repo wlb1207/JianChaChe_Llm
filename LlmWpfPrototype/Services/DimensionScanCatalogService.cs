@@ -18,7 +18,7 @@ public sealed class DimensionScanCatalogService
 
     public DimensionScanCatalogService()
     {
-        var reportsDirectory = Path.Combine(AppContext.BaseDirectory, "reports");
+        var reportsDirectory = AppPaths.ReportsDirectory;
         _jsonPath = Path.Combine(reportsDirectory, "dimension-scan-result.json");
         _csvPath = Path.Combine(reportsDirectory, "dimension-scan-result.csv");
     }

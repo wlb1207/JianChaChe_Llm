@@ -444,8 +444,7 @@ public sealed class SolidWorksService : ISolidWorksService
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new SolidWorksDimensionScanResult();
-        var outputDirectory = Path.Combine(AppContext.BaseDirectory, "reports");
-        Directory.CreateDirectory(outputDirectory);
+        var outputDirectory = AppPaths.ReportsDirectory;
         result.JsonOutputPath = Path.Combine(outputDirectory, "dimension-scan-result.json");
         result.CsvOutputPath = Path.Combine(outputDirectory, "dimension-scan-result.csv");
         var temporaryOpenedDocumentPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

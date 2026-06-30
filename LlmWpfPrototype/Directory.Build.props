@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <BaseOutputPath>E:\反力架\构建输出\LlmWpfPrototype_bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>E:\反力架\构建缓存\LlmWpfPrototype_obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

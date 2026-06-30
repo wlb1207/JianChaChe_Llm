@@ -56,14 +56,15 @@ public sealed class LlmService : ILlmService
     public async Task<string> ParseDesignRequirementAsync(
         string userInput,
         IReadOnlyList<ConversationMessage>? conversationHistory = null,
+        LlmChatRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default)
     {
         var mode = NormalizeMode(_options.Mode);
         return mode switch
         {
             MockMode => await BuildMockResponseAsync(cancellationToken),
-            CloudMode => await CallRemoteApiAsync(userInput, conversationHistory, requireApiKey: true, cancellationToken),
-            LocalMode => await CallRemoteApiAsync(userInput, conversationHistory, requireApiKey: false, cancellationToken),
+            CloudMode => await CallRemoteApiAsync(userInput, conversationHistory, requestOptions, requireApiKey: true, cancellationToken),
+            LocalMode => await CallRemoteApiAsync(userInput, conversationHistory, requestOptions, requireApiKey: false, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported LLM mode: {_options.Mode}")
         };
     }
@@ -248,6 +249,7 @@ public sealed class LlmService : ILlmService
     private async Task<string> CallRemoteApiAsync(
         string userInput,
         IReadOnlyList<ConversationMessage>? conversationHistory,
+        LlmChatRequestOptions? requestOptions,
         bool requireApiKey,
         CancellationToken cancellationToken)
     {
@@ -276,12 +278,13 @@ public sealed class LlmService : ILlmService
             var responseText = await SendChatCompletionAsync(
                 userInput,
                 conversationHistory,
+                requestOptions,
                 apiKey,
                 preferredFormat,
                 requestId,
                 cancellationToken);
 
-            return NormalizeModelResponseWithDiagnostics(responseText, userInput);
+            return NormalizeModelResponseWithDiagnostics(responseText, userInput, requestOptions);
         }
         catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -296,12 +299,13 @@ public sealed class LlmService : ILlmService
     private async Task<string> SendChatCompletionAsync(
         string userInput,
         IReadOnlyList<ConversationMessage>? conversationHistory,
+        LlmChatRequestOptions? requestOptions,
         string apiKey,
         ResponseFormatMode responseFormatMode,
         string requestId,
         CancellationToken cancellationToken)
     {
-        var systemPrompt = BuildUnifiedConversationSystemPrompt();
+        var systemPrompt = BuildUnifiedConversationSystemPrompt(requestOptions);
         var attempts = new[]
         {
             responseFormatMode,
@@ -394,10 +398,14 @@ public sealed class LlmService : ILlmService
         throw lastException ?? new InvalidOperationException("LLM request failed.");
     }
 
-    private string NormalizeModelResponseWithDiagnostics(string content, string userInput)
+    private string NormalizeModelResponseWithDiagnostics(string content, string userInput, LlmChatRequestOptions? requestOptions)
     {
         EmitDiagnostic("[LLM Chat] ReplyTextActionInference=Disabled");
         EmitDiagnostic($"[LLM Chat] PreParseText=<redacted>, Length={content.Length}");
+        if (requestOptions?.ReplyOnlyMode == true)
+        {
+            EmitDiagnostic("[LLM Chat] ReplyOnlyMode=True");
+        }
 
         try
         {
@@ -419,6 +427,11 @@ public sealed class LlmService : ILlmService
 
             EmitDiagnostic($"[LLM Chat] StructuredActions.Count={structuredActions.Count}");
             EmitDiagnostic($"[LLM Chat] StructuredCommands.Count={structuredCommands.Count}");
+            if (requestOptions?.ReplyOnlyMode == true &&
+                (structuredActions.Count > 0 || structuredCommands.Count > 0))
+            {
+                EmitDiagnostic("[LLM Chat] StructuredActionsIgnoredBecauseReplyOnly=True");
+            }
 
             var parsedActionCount = structuredActions.Count + structuredCommands
                 .Except(structuredActions, StringComparer.OrdinalIgnoreCase)
@@ -1504,7 +1517,7 @@ public sealed class LlmService : ILlmService
             : content[..maxLength] + "...";
     }
 
-    private static string BuildUnifiedConversationSystemPrompt()
+    private static string BuildUnifiedConversationSystemPrompt(LlmChatRequestOptions? requestOptions = null)
     {
         var schema = new
         {
@@ -1528,7 +1541,7 @@ public sealed class LlmService : ILlmService
         };
 
         var schemaJson = JsonSerializer.Serialize(schema, CompactJsonOptions);
-        return $"""
+        var basePrompt = $"""
 You are a bridge inspection vehicle model design assistant.
 You must return pure JSON only. Do not output Markdown, code fences, or explanatory text outside JSON.
 Do not directly operate SolidWorks. Do not generate or guess model file paths, assembly paths, part paths, feature names, sketch names, or dimension names.
@@ -1544,8 +1557,8 @@ Rules:
 4. `parameters` contains structured parameter extraction.
 5. `needConfirmation=true` when information is insufficient.
 6. `questions` contains follow-up questions when needed.
-7. If the user is chatting, greeting, asking for help, or asking what the system can do, return `commands=[]`, `actions=[]`, and `parameters=[]`.
-8. If the user asks to open or view the model, use `open_working_model`.
+7. If the user is chatting, greeting, asking for help, asking what the system can do, asking whether the system can do something, or asking which capabilities are supported, return `commands=[]`, `actions=[]`, and `parameters=[]`.
+8. Only use `open_working_model` when the user gives a clear execution command to open or view the current model. Do not use `open_working_model` for capability questions such as “你能打开模型吗”.
 9. If the user asks to reset, clear, undo, or restore modifications, use `reset_model_workspace`.
 10. If the user asks to modify model dimensions or truss member parameters, use `update_solidworks_dimensions`.
 11. If the user asks about editable parameters, use `query_editable_parameters`.
@@ -1575,6 +1588,32 @@ Rules:
     - 查询可编辑参数
     - 把桁架上弦杆截面改成 80x80x6
     - 把桁架下弦杆截面改成 80x80x6
+30. If the user asks capability questions such as “你能做什么”, “你支持哪些功能”, “你能打开模型吗”, or “你只有这些功能吗”, reply in natural language only and do not return any action.
+31. Do not convert “你能打开模型吗” into `open_working_model`.
+32. Do not convert “你只有这些功能吗” into any action.
+33. Only return structured actions for clear execution commands. Capability questions, polite capability checks, and general help requests must stay action-free.
+34. If the program has not really executed an action, do not claim “已打开”, “已修改”, or “已保存”.
+35. For APDL / ANSYS, describe the current scope as analysis preparation, workflow guidance, or script drafting unless the program has explicitly connected a real solver. Do not claim real ANSYS solving when it is not actually connected.
+""";
+
+        if (requestOptions?.ReplyOnlyMode != true)
+        {
+            return basePrompt;
+        }
+
+        var intentLabel = string.IsNullOrWhiteSpace(requestOptions.IntentLabel)
+            ? "ReplyOnly"
+            : requestOptions.IntentLabel.Trim();
+
+        return basePrompt + $"""
+
+Reply-only override for this turn:
+- IntentLabel={intentLabel}
+- This turn is reply-only. You must provide natural-language guidance in JSON `reply`.
+- Return `commands=[]`, `actions=[]`, and `parameters=[]`.
+- Do not return `open_working_model`, `update_solidworks_dimensions`, `reset_model_workspace`, or any other executable action.
+- Do not claim the model was opened, modified, reset, or saved.
+- If the user is greeting, asking capabilities, or asking whether an action is supported, explain safely and guide them to the exact command they can enter next.
 """;
     }
 

@@ -55,7 +55,7 @@ public static class AppConfigLoader
 
     public static string GetConfigPath()
     {
-        return Path.Combine(AppContext.BaseDirectory, "Config", "appsettings.json");
+        return AppPaths.GetBundledConfigPath("appsettings.json");
     }
 
     private static LlmOptions ReadLlmOptions(JsonElement root)

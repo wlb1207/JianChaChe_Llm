@@ -19,7 +19,7 @@ public sealed class EditableTrussMembersConfigService
 
     public EditableTrussMembersConfigService()
     {
-        _configPath = Path.Combine(AppContext.BaseDirectory, "Config", "editable-truss-members.json");
+        _configPath = AppPaths.EnsureSeededUserConfig("editable-truss-members.json");
     }
 
     public bool ConfigExists()
