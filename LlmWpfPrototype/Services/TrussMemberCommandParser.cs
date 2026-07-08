@@ -14,9 +14,13 @@ public sealed class TrussMemberCommandParser
         @"(?<width>\d+(?:\.\d+)?)\s*[xX×*]\s*(?<height>\d+(?:\.\d+)?)\s*(?:mm)?\s*(?![xX×*])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static readonly Regex ThicknessRegex = new(
-        @"壁厚(?:改成|改为|调整为|采用)?\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>mm)?",
+    private static readonly Regex ThicknessKeywordRegex = new(
+        @"(?:壁厚|厚度|管壁|板厚)\s*(?:改成|改为|调整为|采用|设为|设置为|取|=|:|：)?\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>mm)?",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ThicknessAliasRegex = new(
+        @"(?<![a-zA-Z])t\s*(?:=|改成|改为|调整为|采用|设为|设置为|:|：)?\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>mm)?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Regex WidthRegex = new(
         @"(?:截面)?宽度(?:改成|改为|调整为|采用)?\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>mm)?",
@@ -61,6 +65,12 @@ public sealed class TrussMemberCommandParser
 
         if (TryParseSectionWidthHeight(userInput, out var sectionWidthHeight))
         {
+            if (TryParseThickness(userInput, out var thickness))
+            {
+                sectionWidthHeight.Thickness = thickness;
+                sectionWidthHeight.IsFullSectionUpdate = true;
+            }
+
             sectionWidthHeight.TargetMemberIds = targetMemberIds;
             sectionWidthHeight.RawText = userInput;
             result = sectionWidthHeight;
@@ -86,6 +96,9 @@ public sealed class TrussMemberCommandParser
             CreateExpected("把桁架上弦杆截面改成 80×80×6", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true),
             CreateExpected("把桁架上弦杆截面改成 80x80x6", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true),
             CreateExpected("把桁架上弦杆截面改成 80×80", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, null, false),
+            CreateExpected("把桁架上弦杆截面改成 80x80，壁厚改成 6", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true),
+            CreateExpected("把桁架上弦杆截面改成 80×80，厚度改成 6", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true),
+            CreateExpected("把桁架上弦杆截面改成 80*80，t=6", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true),
             CreateExpected("把上弦杆方管改成 80*80*6", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true),
             CreateExpected("把桁架上弦杆壁厚改成 6mm", [EditableTrussMemberCatalogService.UpperChordMemberId], null, null, 6, false),
             CreateExpected("上弦杆采用 80×80×6 截面", [EditableTrussMemberCatalogService.UpperChordMemberId], 80, 80, 6, true)
@@ -119,7 +132,10 @@ public sealed class TrussMemberCommandParser
 
         var mentionsUpperChord =
             normalized.Contains("上弦", StringComparison.Ordinal) ||
+            normalized.Contains("上桁架", StringComparison.Ordinal) ||
             normalized.Contains("上部弦杆", StringComparison.Ordinal) ||
+            normalized.Contains("上部桁架", StringComparison.Ordinal) ||
+            normalized.Contains("上层桁架", StringComparison.Ordinal) ||
             normalized.Contains("上弦杆方管", StringComparison.Ordinal) ||
             normalized.Contains("上弦方管", StringComparison.Ordinal);
 
@@ -194,7 +210,7 @@ public sealed class TrussMemberCommandParser
     {
         result = new TrussMemberCommandParseResult();
 
-        if (TryParseDimension(input, ThicknessRegex, out var thickness))
+        if (TryParseThickness(input, out var thickness))
         {
             result = new TrussMemberCommandParseResult
             {
@@ -238,6 +254,16 @@ public sealed class TrussMemberCommandParser
         value = 0;
         var match = regex.Match(input);
         return match.Success && TryParseDecimal(match.Groups["value"].Value, out value);
+    }
+
+    private static bool TryParseThickness(string input, out decimal value)
+    {
+        if (TryParseDimension(input, ThicknessKeywordRegex, out value))
+        {
+            return true;
+        }
+
+        return TryParseDimension(input, ThicknessAliasRegex, out value);
     }
 
     private static bool TryParseDecimal(string value, out decimal parsed)

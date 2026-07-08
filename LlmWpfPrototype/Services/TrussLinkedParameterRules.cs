@@ -23,11 +23,15 @@ internal static class TrussLinkedParameterRules
         BaseRedTubeExtrudeLengthMm: 1280m,
         TargetPartFileNames:
         [
-            "20-方管70×70×5-1280.SLDPRT"
+            "20-方管70×70×5-1280.SLDPRT",
+            "10-方管70x70x5x1280.SLDPRT",
+            "10-方管70×70×5×1280.SLDPRT"
         ],
         DimensionNameCandidates:
         [
             "D1@拉伸-薄壁1@20-方管70×70×5-1280.Part",
+            "D1@拉伸-薄壁1@10-方管70x70x5x1280.Part",
+            "D1@拉伸-薄壁1@10-方管70×70×5×1280.Part",
             "D1@拉伸-薄壁1",
             "D1@Extrude-Thin1",
             "D1@凸台-拉伸1"

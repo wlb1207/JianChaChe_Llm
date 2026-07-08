@@ -355,6 +355,21 @@ public sealed class CommandDispatcher
 
             if (_trussMemberCommandParser.TryParse(rawUserInput, out var trussParseResult))
             {
+                if (trussParseResult.Width.HasValue)
+                {
+                    logWriter($"ParsedSectionWidth={trussParseResult.Width.Value.ToString(CultureInfo.InvariantCulture)}");
+                }
+
+                if (trussParseResult.Height.HasValue)
+                {
+                    logWriter($"ParsedSectionHeight={trussParseResult.Height.Value.ToString(CultureInfo.InvariantCulture)}");
+                }
+
+                if (trussParseResult.Thickness.HasValue)
+                {
+                    logWriter($"ParsedThicknessValue={trussParseResult.Thickness.Value.ToString(CultureInfo.InvariantCulture)}");
+                }
+
                 return await HandleTrussMemberUpdateAsync(
                     trussParseResult,
                     assistantMessages,
@@ -393,7 +408,9 @@ public sealed class CommandDispatcher
         catch (Exception ex)
         {
             logWriter($"执行 update_solidworks_dimensions 失败：{ex}");
-            assistantMessages.Add($"SolidWorks 尺寸更新失败：{ex.Message}");
+            assistantMessages.Add(IsMissingModelPathException(ex)
+                ? "请先在 SolidWorks 中打开要修改的模型。"
+                : $"SolidWorks 尺寸更新失败：{ex.Message}");
             return new DimensionUpdateDispatchResult(true, false, false);
         }
     }
@@ -437,6 +454,8 @@ public sealed class CommandDispatcher
             logWriter,
             cancellationToken);
 
+        logWriter($"ThicknessUpdateRequested={parseResult.Thickness.HasValue}");
+
         await AppendLinkedUpperChordRedTubeCompensationRequestsAsync(
             updateRequests,
             targetMembers,
@@ -458,6 +477,12 @@ public sealed class CommandDispatcher
 
         assistantMessages.Add("桁架构件尺寸更新失败，请检查高级调试日志。");
         return new DimensionUpdateDispatchResult(true, false, false);
+    }
+
+    private static bool IsMissingModelPathException(Exception exception)
+    {
+        return exception.Message.Contains("The path is empty", StringComparison.OrdinalIgnoreCase) ||
+               exception.Message.Contains("Parameter 'path'", StringComparison.OrdinalIgnoreCase);
     }
 
     private List<SolidWorksDimensionUpdateRequest> BuildDimensionUpdateRequests(
@@ -594,9 +619,12 @@ public sealed class CommandDispatcher
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            var filteredCandidates = BuildPartSpecificDimensionNameCandidates(
+                partFilePath,
+                rule.DimensionNameCandidates);
             var resolvedDimensionName = await ResolveLinkedRuleDimensionNameAsync(
                 partFilePath,
-                rule.DimensionNameCandidates,
+                filteredCandidates,
                 logWriter,
                 cancellationToken);
 
@@ -1008,6 +1036,64 @@ public sealed class CommandDispatcher
         }
 
         return string.Empty;
+    }
+
+    private static IReadOnlyList<string> BuildPartSpecificDimensionNameCandidates(
+        string partFilePath,
+        IReadOnlyList<string> dimensionNameCandidates)
+    {
+        var orderedCandidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var partName = Path.GetFileNameWithoutExtension(partFilePath);
+        var partToken = string.IsNullOrWhiteSpace(partName)
+            ? string.Empty
+            : $"{partName}.Part";
+
+        if (!string.IsNullOrWhiteSpace(partToken))
+        {
+            foreach (var candidate in dimensionNameCandidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate) ||
+                    !candidate.Contains(partToken, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (seen.Add(candidate))
+                {
+                    orderedCandidates.Add(candidate);
+                }
+            }
+        }
+
+        foreach (var candidate in dimensionNameCandidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate) ||
+                candidate.Contains(".Part", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (seen.Add(candidate))
+            {
+                orderedCandidates.Add(candidate);
+            }
+        }
+
+        foreach (var candidate in dimensionNameCandidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (seen.Add(candidate))
+            {
+                orderedCandidates.Add(candidate);
+            }
+        }
+
+        return orderedCandidates;
     }
 
     private List<string> ResolveLinkedRulePartPaths(TrussLinkedParameterRule rule, Action<string> logWriter)
