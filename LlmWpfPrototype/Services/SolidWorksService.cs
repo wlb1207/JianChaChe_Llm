@@ -324,6 +324,17 @@ public sealed class SolidWorksService : ISolidWorksService
             PartFilePath = partFilePath,
             RequestedDimensionName = dimensionName
         };
+        var originalActiveDocument = GetActiveDocument();
+        var originalActiveDocumentTitle = originalActiveDocument?.GetTitle() ?? string.Empty;
+        var originalActiveDocumentPath = NormalizeFilePath(originalActiveDocument?.GetPathName() ?? string.Empty);
+        var originalActiveDocumentType = originalActiveDocument?.GetType() ?? 0;
+
+        WriteLog(logWriter, $"ProbeOriginalActiveDocument={originalActiveDocumentTitle}");
+        WriteLog(logWriter, $"ProbeOriginalActiveDocumentPath={originalActiveDocumentPath}");
+        WriteLog(logWriter, $"ProbeOriginalActiveDocumentType={originalActiveDocumentType}");
+
+        try
+        {
 
         if (!ValidateExistingFile(partFilePath, logWriter, "零件"))
         {
@@ -356,6 +367,20 @@ public sealed class SolidWorksService : ISolidWorksService
         result.CurrentValue = reference.CurrentValue;
         result.Message = "已找到对应尺寸。";
         return result;
+        }
+        finally
+        {
+            var restoreResult = false;
+            if (!string.IsNullOrWhiteSpace(originalActiveDocumentTitle))
+            {
+                restoreResult = TryActivateDocumentByTitle(originalActiveDocumentTitle, logWriter);
+            }
+
+            WriteLog(logWriter, $"ProbeRestoreOriginalActiveDocumentResult={restoreResult}");
+            var activeDocumentAfterRestore = GetActiveDocument();
+            WriteLog(logWriter, $"ProbeActiveDocumentAfterRestore={activeDocumentAfterRestore?.GetTitle() ?? string.Empty}");
+            WriteLog(logWriter, $"ProbeActiveDocumentAfterRestorePath={NormalizeFilePath(activeDocumentAfterRestore?.GetPathName() ?? string.Empty)}");
+        }
     }
 
     public async Task<IReadOnlyList<SolidWorksDimensionScanItem>> ListPartDimensionsAsync(
@@ -811,38 +836,70 @@ public sealed class SolidWorksService : ISolidWorksService
             return;
         }
 
-        var editedPart = preparedUpdates.LastOrDefault();
-        if (editedPart is null)
-        {
-            return;
-        }
-
-        var editedPartTitle = editedPart.Model.GetTitle();
-        var editedPartPath = NormalizeFilePath(editedPart.Model.GetPathName() ?? string.Empty);
-        WriteLog(logWriter, $"EditedPartDocument={editedPartTitle}");
         WriteLog(logWriter, "DimensionUpdateSucceeded=True");
-        WriteLog(logWriter, "SavingEditedPart=True");
-
-        var willCloseEditedPart = context.StartedFromAssembly &&
-                                  !string.IsNullOrWhiteSpace(editedPartTitle) &&
-                                  !string.Equals(editedPartTitle, context.OriginalActiveDocumentTitle, StringComparison.OrdinalIgnoreCase) &&
-                                  (editedPart.WasOpenedByThisFlow || !string.Equals(editedPartPath, context.AssemblyDocumentPath, StringComparison.OrdinalIgnoreCase));
-        WriteLog(logWriter, $"WillCloseEditedPartAfterSave={willCloseEditedPart}");
-
-        if (willCloseEditedPart)
-        {
-            var closeSucceeded = TryCloseDocumentByTitle(editedPartTitle, logWriter);
-            WriteLog(logWriter, $"CloseEditedPartResult={closeSucceeded}");
-        }
-        else
-        {
-            WriteLog(logWriter, "CloseEditedPartResult=Skipped");
-        }
-
         if (!context.StartedFromAssembly)
         {
             WriteLog(logWriter, "ReactivatedAssemblyResult=Skipped");
             return;
+        }
+
+        var modifiedPartDocuments = new List<(string Title, string Path, bool WasOpenedByThisFlow)>();
+        var seenDocuments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var preparedUpdate in preparedUpdates)
+        {
+            var model = preparedUpdate.Model;
+            if (model is null || model.GetType() != (int)swDocumentTypes_e.swDocPART)
+            {
+                continue;
+            }
+
+            var partTitle = model.GetTitle() ?? string.Empty;
+            var partPath = NormalizeFilePath(model.GetPathName() ?? string.Empty);
+            var identity = !string.IsNullOrWhiteSpace(partPath)
+                ? $"path:{partPath}"
+                : !string.IsNullOrWhiteSpace(partTitle)
+                    ? $"title:{partTitle}"
+                    : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(identity))
+            {
+                WriteLog(logWriter, "CloseModifiedPartResult=Skipped(NoIdentity)");
+                continue;
+            }
+
+            var isAssemblyDocument = !string.IsNullOrWhiteSpace(context.AssemblyDocumentPath)
+                ? string.Equals(partPath, context.AssemblyDocumentPath, StringComparison.OrdinalIgnoreCase)
+                : !string.IsNullOrWhiteSpace(context.AssemblyDocumentTitle) &&
+                  string.Equals(partTitle, context.AssemblyDocumentTitle, StringComparison.OrdinalIgnoreCase);
+            if (isAssemblyDocument)
+            {
+                WriteLog(logWriter, $"CloseModifiedPartResult=Skipped(Assembly); Title={partTitle}; Path={partPath}");
+                continue;
+            }
+
+            if (!seenDocuments.Add(identity))
+            {
+                WriteLog(logWriter, $"CloseModifiedPartResult=Skipped(Duplicate); Title={partTitle}; Path={partPath}");
+                continue;
+            }
+
+            modifiedPartDocuments.Add((partTitle, partPath, preparedUpdate.WasOpenedByThisFlow));
+        }
+
+        WriteLog(logWriter, $"ModifiedPartDocumentsToClose={modifiedPartDocuments.Count}");
+        foreach (var modifiedPart in modifiedPartDocuments)
+        {
+            WriteLog(logWriter, $"ClosingModifiedPart=Title:{modifiedPart.Title}, Path:{modifiedPart.Path}, WasOpenedByThisFlow={modifiedPart.WasOpenedByThisFlow}");
+
+            if (string.IsNullOrWhiteSpace(modifiedPart.Title))
+            {
+                WriteLog(logWriter, $"CloseModifiedPartResult=Skipped(NoTitle); Path={modifiedPart.Path}");
+                continue;
+            }
+
+            var closeSucceeded = TryCloseDocumentByTitle(modifiedPart.Title, logWriter);
+            WriteLog(logWriter, $"CloseModifiedPartResult={closeSucceeded}; Title={modifiedPart.Title}; Path={modifiedPart.Path}");
         }
 
         var assemblyDocument = ResolveDocumentForReactivation(context);
