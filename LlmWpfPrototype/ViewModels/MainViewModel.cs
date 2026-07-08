@@ -1083,6 +1083,14 @@ public sealed class MainViewModel : ObservableObject
             var confirmationReply = !string.IsNullOrWhiteSpace(llmReply)
                 ? llmReply
                 : "当前信息还不够完整，请补充缺少的构件或参数。";
+            confirmationReply = RewriteAssistantReplyIfExecutionNotSucceeded(
+                confirmationReply,
+                userInput,
+                parseResult,
+                actionRequested: HasDispatchCommands(parseResult),
+                handled: false,
+                succeeded: false,
+                fallbackReply: "当前信息还不够完整，请补充缺少的构件或参数。");
             AppendLog($"[AI Reply] {confirmationReply}");
             AddAssistantMessage(confirmationReply);
             AppendConversationHistory(userInput, confirmationReply);
@@ -1097,11 +1105,19 @@ public sealed class MainViewModel : ObservableObject
             }
 
             AppendLog("[IntentGuard] LlmActionsEmpty=True DoNotInferModification=True");
-            if (!string.IsNullOrWhiteSpace(llmReply))
+            var safeReply = RewriteAssistantReplyIfExecutionNotSucceeded(
+                llmReply,
+                userInput,
+                parseResult,
+                actionRequested: false,
+                handled: false,
+                succeeded: false,
+                fallbackReply: "我没有解析到可执行动作，请换一种说法或提供更明确的参数。");
+            if (!string.IsNullOrWhiteSpace(safeReply))
             {
-                AppendLog($"[AI Reply] {llmReply}");
-                AddAssistantMessage(llmReply);
-                AppendConversationHistory(userInput, llmReply);
+                AppendLog($"[AI Reply] {safeReply}");
+                AddAssistantMessage(safeReply);
+                AppendConversationHistory(userInput, safeReply);
             }
             else
             {
@@ -1120,6 +1136,14 @@ public sealed class MainViewModel : ObservableObject
             var blockedReply = !string.IsNullOrWhiteSpace(llmReply)
                 ? llmReply
                 : "当前还没有形成完整的修改请求，请补充明确的构件和尺寸参数。";
+            blockedReply = RewriteAssistantReplyIfExecutionNotSucceeded(
+                blockedReply,
+                userInput,
+                parseResult,
+                actionRequested: true,
+                handled: false,
+                succeeded: false,
+                fallbackReply: "当前还没有形成完整的修改请求，请补充明确的构件和尺寸参数。");
             AppendLog($"[AI Reply] {blockedReply}");
             AddAssistantMessage(blockedReply);
             AppendConversationHistory(userInput, blockedReply);
@@ -1138,6 +1162,16 @@ public sealed class MainViewModel : ObservableObject
 
         var dispatchReply = MergeAssistantMessages(dispatchResult.AssistantMessages);
         var finalReply = BuildFinalAssistantReply(parseResult, dispatchResult, llmReply, dispatchReply);
+        finalReply = RewriteAssistantReplyIfExecutionNotSucceeded(
+            finalReply,
+            userInput,
+            parseResult,
+            actionRequested: HasDispatchCommands(parseResult),
+            handled: dispatchResult.Handled,
+            succeeded: dispatchResult.Handled && dispatchResult.Succeeded,
+            fallbackReply: dispatchResult.Handled
+                ? dispatchReply
+                : BuildBlockedActionSafetyReply(parseResult));
 
         if (!string.IsNullOrWhiteSpace(finalReply))
         {
@@ -2352,19 +2386,58 @@ public sealed class MainViewModel : ObservableObject
         string userInput,
         ReplyOnlyIntentContext replyOnlyIntent)
     {
-        if (!string.IsNullOrWhiteSpace(llmReply) && !ContainsUnsafeSuccessClaim(llmReply))
+        return RewriteAssistantReplyIfExecutionNotSucceeded(
+            llmReply,
+            userInput,
+            parseResult: null,
+            actionRequested: false,
+            handled: false,
+            succeeded: false,
+            fallbackReply: !string.IsNullOrWhiteSpace(replyOnlyIntent.FallbackReply)
+                ? replyOnlyIntent.FallbackReply
+                : BuildQuestionOnlySafetyReply(userInput));
+    }
+
+    private string RewriteAssistantReplyIfExecutionNotSucceeded(
+        string reply,
+        string userInput,
+        LlmParseResult? parseResult,
+        bool actionRequested,
+        bool handled,
+        bool succeeded,
+        string? fallbackReply = null)
+    {
+        if (succeeded)
         {
-            return llmReply;
+            return reply;
+        }
+
+        if (!string.IsNullOrWhiteSpace(reply) && !ContainsUnsafeSuccessClaim(reply))
+        {
+            return reply;
         }
 
         AppendLog("[IntentGuard] FallbackLocalReply=True");
-        AppendLog(string.IsNullOrWhiteSpace(llmReply)
+        AppendLog(string.IsNullOrWhiteSpace(reply)
             ? "[IntentGuard] FallbackReason=LLMFailed"
             : "[IntentGuard] FallbackReason=UnsafeLlmReply");
-        AppendLog("[IntentGuard] ActionExecutionSkipped=True");
-        return !string.IsNullOrWhiteSpace(replyOnlyIntent.FallbackReply)
-            ? replyOnlyIntent.FallbackReply
-            : BuildQuestionOnlySafetyReply(userInput);
+        AppendLog(handled
+            ? "[IntentGuard] ActionExecutionFailedOrCancelled=True"
+            : actionRequested
+                ? "[IntentGuard] ActionExecutionSkipped=True"
+                : "[IntentGuard] ActionExecutionNotRequested=True");
+
+        if (!string.IsNullOrWhiteSpace(fallbackReply))
+        {
+            return fallbackReply;
+        }
+
+        if (actionRequested)
+        {
+            return BuildBlockedActionSafetyReply(parseResult);
+        }
+
+        return BuildQuestionOnlySafetyReply(userInput);
     }
 
     private static bool ContainsUnsafeSuccessClaim(string reply)
@@ -2375,11 +2448,25 @@ public sealed class MainViewModel : ObservableObject
         }
 
         return reply.Contains("已打开", StringComparison.Ordinal) ||
+               reply.Contains("已经打开", StringComparison.Ordinal) ||
                reply.Contains("已为你打开", StringComparison.Ordinal) ||
                reply.Contains("模型已打开", StringComparison.Ordinal) ||
+               reply.Contains("已执行", StringComparison.Ordinal) ||
+               reply.Contains("已经执行", StringComparison.Ordinal) ||
+               reply.Contains("执行完成", StringComparison.Ordinal) ||
+               reply.Contains("已完成", StringComparison.Ordinal) ||
+               reply.Contains("已经完成", StringComparison.Ordinal) ||
+               reply.Contains("已处理", StringComparison.Ordinal) ||
+               reply.Contains("处理完成", StringComparison.Ordinal) ||
+               reply.Contains("已更新", StringComparison.Ordinal) ||
+               reply.Contains("更新完成", StringComparison.Ordinal) ||
                reply.Contains("已完成修改", StringComparison.Ordinal) ||
+               reply.Contains("已经修改", StringComparison.Ordinal) ||
                reply.Contains("修改完成", StringComparison.Ordinal) ||
-               reply.Contains("已保存", StringComparison.Ordinal);
+               reply.Contains("已保存", StringComparison.Ordinal) ||
+               reply.Contains("已经保存", StringComparison.Ordinal) ||
+               reply.Contains("已帮你", StringComparison.Ordinal) ||
+               reply.Contains("操作完成", StringComparison.Ordinal);
     }
 
     private static string BuildQuestionOnlySafetyReply(string input)
@@ -2947,14 +3034,16 @@ public sealed class MainViewModel : ObservableObject
 
     private string BuildClearModificationSuccessReply(LlmParseResult? parseResult)
     {
+        var summary = BuildShortSuccessfulModificationReply(parseResult);
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            return summary;
+        }
+
         var details = BuildClearModificationDetails(parseResult);
         if (details.Count == 0)
         {
-            return """
-已完成修改。
-
-模型已更新并保存。
-""".Trim();
+            return "已完成修改。";
         }
 
         var builder = new StringBuilder();
@@ -2992,8 +3081,20 @@ public sealed class MainViewModel : ObservableObject
             .ToList();
 
         return displayLines.Count == 1
-            ? $"已将{displayLines[0]}。{Environment.NewLine}模型已更新，请检查 SolidWorks 中的显示效果。"
+            ? $"已完成：{displayLines[0]}。"
             : string.Empty;
+    }
+
+    private string BuildShortSuccessfulModificationReply(LlmParseResult? parseResult)
+    {
+        var summary = TryBuildModificationSummaryFromParameters(parseResult?.Parameters);
+        if (string.IsNullOrWhiteSpace(summary))
+        {
+            return string.Empty;
+        }
+
+        summary = summary.Replace("截面 ", string.Empty, StringComparison.Ordinal);
+        return $"已完成：{summary}。";
     }
 
     private List<string> BuildClearModificationDetails(LlmParseResult? parseResult)
