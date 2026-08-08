@@ -74,7 +74,11 @@ public static class AppConfigLoader
             Model = llmSection.TryGetProperty("Model", out var model) ? model.GetString() ?? string.Empty : string.Empty,
             TimeoutSeconds = llmSection.TryGetProperty("TimeoutSeconds", out var timeoutSeconds) && timeoutSeconds.TryGetInt32(out var seconds)
                 ? seconds
-                : 60
+                : 60,
+            AlwaysUseLlmForLocalReplies = llmSection.TryGetProperty("AlwaysUseLlmForLocalReplies", out var alwaysUseLlmForLocalReplies) &&
+                                          alwaysUseLlmForLocalReplies.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? alwaysUseLlmForLocalReplies.GetBoolean()
+                : true
         };
     }
 

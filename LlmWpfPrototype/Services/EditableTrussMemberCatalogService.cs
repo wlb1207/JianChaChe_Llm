@@ -10,6 +10,7 @@ public sealed class EditableTrussMemberCatalogService
 {
     public const string UpperChordMemberId = "upper_chord";
     public const string LowerChordMemberId = "lower_chord";
+    public const string LowerTrussMemberId = "lower_truss";
 
     private readonly string _configPath;
     private readonly JsonSerializerOptions _serializerOptions = new()

@@ -587,6 +587,7 @@ public sealed class SolidWorksService : ISolidWorksService
 
             var setValueStatus = reference.Dimension.SetSystemValue3(systemValue, configurationOption, configurationNames);
             var updateSucceeded = setValueStatus == (int)swSetValueReturnStatus_e.swSetValue_Successful;
+            EnsureSafeDocumentOperation(model, logWriter);
             var rebuildSucceeded = model.EditRebuild3();
             var saveSucceeded = SaveDocument(model, logWriter);
 
@@ -648,6 +649,7 @@ public sealed class SolidWorksService : ISolidWorksService
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                EnsureSafeDocumentOperation(document, logWriter);
                 if (!document.ForceRebuild3(false))
                 {
                     WriteLog(logWriter, $"Transaction rebuild failed. Path={document.GetPathName()}");
@@ -719,9 +721,29 @@ public sealed class SolidWorksService : ISolidWorksService
 
         var model = GetOpenedDocumentByPath(update.PartFilePath);
         var wasOpenedByThisFlow = false;
+        var isLinkedLowerChordPart = update.ParameterName.StartsWith("linked_lower_chord_part.", StringComparison.OrdinalIgnoreCase);
+        var linkedPartBeforeLastWriteTime = DateTime.MinValue;
+        if (isLinkedLowerChordPart && File.Exists(update.PartFilePath))
+        {
+            linkedPartBeforeLastWriteTime = File.GetLastWriteTime(update.PartFilePath);
+            WriteLog(logWriter, $"[LinkedPart] OpenPartPath={NormalizeFilePath(update.PartFilePath)}");
+            WriteLog(logWriter, $"[LinkedPart] BeforeLastWriteTime={linkedPartBeforeLastWriteTime:O}");
+        }
+
+        if (isLinkedLowerChordPart && model is not null)
+        {
+            WriteLog(logWriter, "[LinkedPart] OpenResult=True");
+        }
+
         if (model is null)
         {
-            if (!TryOpenDocumentByCom(update.PartFilePath, (int)swDocumentTypes_e.swDocPART, logWriter))
+            var openSucceeded = TryOpenDocumentByCom(update.PartFilePath, (int)swDocumentTypes_e.swDocPART, logWriter);
+            if (isLinkedLowerChordPart)
+            {
+                WriteLog(logWriter, $"[LinkedPart] OpenResult={openSucceeded}");
+            }
+
+            if (!openSucceeded)
             {
                 return false;
             }
@@ -733,6 +755,12 @@ public sealed class SolidWorksService : ISolidWorksService
         if (model is null)
         {
             return false;
+        }
+
+        if (isLinkedLowerChordPart)
+        {
+            WriteLog(logWriter, $"[LinkedPart] OpenedDocPath={NormalizeFilePath(model.GetPathName() ?? string.Empty)}");
+            WriteLog(logWriter, "[LinkedPart] Applying linked lower chord update");
         }
 
         ActivateDocument(model, logWriter);
@@ -792,6 +820,7 @@ public sealed class SolidWorksService : ISolidWorksService
                     preparedUpdate.OriginalSystemValue,
                     preparedUpdate.ConfigurationOption,
                     preparedUpdate.ConfigurationNames);
+                EnsureSafeDocumentOperation(preparedUpdate.Model, logWriter);
                 preparedUpdate.Model.ForceRebuild3(false);
             }
             catch (Exception ex)
@@ -913,6 +942,7 @@ public sealed class SolidWorksService : ISolidWorksService
         WriteLog(logWriter, $"ReactivatedAssembly={(reactivated ? assemblyDocument.GetTitle() : "False")}");
         if (reactivated)
         {
+            EnsureSafeDocumentOperation(assemblyDocument, logWriter);
             var rebuildSucceeded = assemblyDocument.ForceRebuild3(false);
             WriteLog(logWriter, $"RebuildAssemblyAfterPartClose={rebuildSucceeded}");
             try
@@ -1988,22 +2018,58 @@ public sealed class SolidWorksService : ISolidWorksService
     {
         try
         {
-            if (!ValidateSavePermission(document, logWriter, out var denialMessage))
+            EnsureSafeDocumentOperation(document, logWriter);
+
+            var normalizedPath = NormalizeFilePath(document.GetPathName() ?? string.Empty);
+            var isLinkedLowerChordPart = normalizedPath.EndsWith(@"桁架2\1-方管70×70×5-1159.SLDPRT", StringComparison.OrdinalIgnoreCase);
+            var beforeLastWriteTime = isLinkedLowerChordPart && File.Exists(normalizedPath)
+                ? File.GetLastWriteTime(normalizedPath)
+                : DateTime.MinValue;
+            if (isLinkedLowerChordPart)
             {
-                WriteLog(logWriter, denialMessage);
-                return false;
+                WriteLog(logWriter, $"[LinkedPart] SavePath={normalizedPath}");
             }
 
             var errors = 0;
             var warnings = 0;
             var saveSucceeded = document.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings);
             WriteLog(logWriter, $"保存文档结果：Path={document.GetPathName()}，Save={saveSucceeded}，Errors={errors}，Warnings={warnings}");
+            if (isLinkedLowerChordPart)
+            {
+                var afterLastWriteTime = File.Exists(normalizedPath)
+                    ? File.GetLastWriteTime(normalizedPath)
+                    : DateTime.MinValue;
+                WriteLog(logWriter, $"[LinkedPart] SaveResult={saveSucceeded}");
+                WriteLog(logWriter, $"[LinkedPart] AfterLastWriteTime={afterLastWriteTime:O}");
+                WriteLog(logWriter, $"[LinkedPart] LastWriteTimeChanged={(beforeLastWriteTime != DateTime.MinValue && afterLastWriteTime != DateTime.MinValue && afterLastWriteTime != beforeLastWriteTime)}");
+            }
             return saveSucceeded;
         }
         catch (Exception ex)
         {
             WriteException(logWriter, "保存 SolidWorks 文档失败。", ex);
             return false;
+        }
+    }
+
+    private void EnsureSafeDocumentOperation(IModelDoc2 document, Action<string>? logWriter)
+    {
+        var rawDocumentPath = document?.GetPathName() ?? string.Empty;
+        var currentDocumentPath = string.IsNullOrWhiteSpace(rawDocumentPath)
+            ? string.Empty
+            : NormalizeFilePath(rawDocumentPath);
+        var isUnderWorkingModelPath = !string.IsNullOrWhiteSpace(_workingModelFolder) &&
+                                      IsPathUnderFolder(currentDocumentPath, _workingModelFolder);
+
+        logWriter?.Invoke($"[Safety] SaveTargetPath={currentDocumentPath}");
+        logWriter?.Invoke($"[Safety] WorkingModelPath={_workingModelFolder}");
+        logWriter?.Invoke($"[Safety] IsUnderWorkingModelPath={isUnderWorkingModelPath}");
+
+        if (string.IsNullOrWhiteSpace(currentDocumentPath) ||
+            !isUnderWorkingModelPath ||
+            (!string.IsNullOrWhiteSpace(_initialModelFolder) && IsPathUnderFolder(currentDocumentPath, _initialModelFolder)))
+        {
+            throw new InvalidOperationException("已中止：检测到目标文件不在工作区目录，未保存，防止误改原始模型。");
         }
     }
 

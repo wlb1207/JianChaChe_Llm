@@ -142,6 +142,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _lastDispatchSuppressDefaultReply;
     private bool _lastDispatchSucceeded;
     private bool _lastExecutableActionSucceeded;
+    private bool _hasQueriedEditableParameters;
     private bool _pendingResetWorkspaceConfirmation;
     private AssistantWorkflowStage _workflowStage = AssistantWorkflowStage.None;
     private string _lastSuccessfulActionSummary = string.Empty;
@@ -245,6 +246,7 @@ public sealed class MainViewModel : ObservableObject
         AppendLog($"尺寸扫描结果路径：{_dimensionScanCatalogService.JsonPath}");
         AppendLog("[VersionMarker] MainViewModel next-step guidance v5 loaded");
         AppendLog("[VersionMarker] LinkedRedTubeCompensation runtime v1 loaded");
+        AppendLog("[VersionMarker] DeterministicLowerTrussGuard runtime v1 loaded");
         AddAssistantMessage("您好，我是桥梁检查车智能设计助手。您可以让我进行 SolidWorks 模型操作、查询或修改已配置的结构参数，也可以咨询 APDL / ANSYS 分析准备相关内容。请输入您的需求，或输入‘你能做什么’查看功能说明。");
     }
 
@@ -640,20 +642,30 @@ public sealed class MainViewModel : ObservableObject
             if (IsNegativeOrCancelModificationText(input))
             {
                 AppendLog($"[IntentGuard] NegativeOrCancelDetected=True InputCategory=negative_or_cancel InputLength={input.Length}");
-                AppendLog("[IntentGuard] LocalHandled=True SkipLlm=True");
                 AppendLog("[IntentGuard] BlockedModificationBecauseNegativeOrCancel=True");
                 AppendLog("[IntentGuard] ReplyTemplate=CancelModification");
                 ClearPendingModificationIntent();
-                AddAssistantMessage("明白，当前不会执行模型修改。我已取消这次未完成的修改意图。");
-                return;
+                if (!TryPrepareReplyOnlyLocalIntent(
+                        UserIntentKind.Unknown,
+                        "CancelModification",
+                        "明白，当前不会执行模型修改。我已取消这次未完成的修改意图。",
+                        out replyOnlyIntent))
+                {
+                    return;
+                }
             }
 
             if (IsModificationStatusQueryText(input))
             {
                 AppendLog("[IntentGuard] ModificationStatusQuery=True");
-                AppendLog("[IntentGuard] LocalHandled=True SkipLlm=True");
-                AddAssistantMessage(BuildModificationStatusReply());
-                return;
+                if (!TryPrepareReplyOnlyLocalIntent(
+                        UserIntentKind.Unknown,
+                        "ModificationStatusQuery",
+                        BuildModificationStatusReply(),
+                        out replyOnlyIntent))
+                {
+                    return;
+                }
             }
 
             if (IsModelStatusQuestion(input))
@@ -674,7 +686,7 @@ public sealed class MainViewModel : ObservableObject
             AppendResetIntentDiagnostics(input);
 
             var classifiedIntent = ClassifyUserIntent(input);
-            if (classifiedIntent is UserIntentKind.Greeting or UserIntentKind.CapabilityQuestion)
+            if (classifiedIntent is UserIntentKind.Greeting or UserIntentKind.CapabilityQuestion or UserIntentKind.NextStepQuery)
             {
                 AppendLog($"[Intent] {classifiedIntent}");
                 AppendLog("[IntentGuard] LocalIntentDetected=True");
@@ -682,10 +694,15 @@ public sealed class MainViewModel : ObservableObject
                 AppendLog("[IntentGuard] AllowLlmReply=True");
                 AppendLog("[IntentGuard] SuppressActionExecution=True");
                 AppendLog("[IntentGuard] AllowedActionGeneration=False");
-                replyOnlyIntent = new ReplyOnlyIntentContext(
-                    classifiedIntent,
-                    classifiedIntent.ToString(),
-                    BuildLocalIntentReply(classifiedIntent, input));
+                var localReply = BuildLocalIntentReply(classifiedIntent, input);
+                if (!TryPrepareReplyOnlyLocalIntent(
+                        classifiedIntent,
+                        classifiedIntent.ToString(),
+                        localReply,
+                        out replyOnlyIntent))
+                {
+                    return;
+                }
             }
 
             if (IsResetCapabilityQuestion(input))
@@ -728,9 +745,14 @@ public sealed class MainViewModel : ObservableObject
                 AppendLog("[IntentGuard] PossibleResetWorkspaceRequest=True");
                 AppendLog("[IntentGuard] ResetWorkspaceRequiresConfirmation=True");
                 AppendLog("[PendingConfirmation] Created Action=reset_model_workspace_then_open");
-                AppendLog("[IntentGuard] LocalHandled=True SkipLlm=True");
-                AddAssistantMessage("你是想打开一份全新的、未修改过的初始模型吗？如果是，请发送：确认重置并打开初始模型。");
-                return;
+                if (!TryPrepareReplyOnlyLocalIntent(
+                        UserIntentKind.Unknown,
+                        "ResetWorkspaceConfirmationPrompt",
+                        "你是想打开一份全新的、未修改过的初始模型吗？如果是，请发送：确认重置并打开初始模型。",
+                        out replyOnlyIntent))
+                {
+                    return;
+                }
             }
 
             if (TryBuildParameterSupplementConsultationReply(input, normalizedInput, out var consultationReply))
@@ -738,10 +760,14 @@ public sealed class MainViewModel : ObservableObject
                 AppendLog("[IntentGuard] ParameterSupplementConsultation=True");
                 AppendLog("[IntentGuard] SkipPendingModification=True");
                 AppendLog("[IntentGuard] ActionExecutionBlockedBecauseConsultation=True");
-                AppendLog($"[AI Reply] {consultationReply}");
-                AddAssistantMessage(consultationReply);
-                AppendConversationHistory(input, consultationReply);
-                return;
+                if (!TryPrepareReplyOnlyLocalIntent(
+                        UserIntentKind.Unknown,
+                        "ParameterSupplementConsultation",
+                        consultationReply,
+                        out replyOnlyIntent))
+                {
+                    return;
+                }
             }
 
             var shouldBypassPendingForClarification = ShouldBypassPendingModificationForClarification(
@@ -775,6 +801,48 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = "正在识别设计参数。";
             AppendLog("开始解析设计需求。");
             AppendLog($"[System] UserInput=<redacted> Length={input.Length}");
+            var deterministicRouteNormalized = NormalizeIntentText(input);
+            var inputContainsLowerTrussKeyword =
+                deterministicRouteNormalized.Contains("下桁架", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("下部桁架", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("下层桁架", StringComparison.OrdinalIgnoreCase);
+            var inputContainsLowerChordKeyword =
+                deterministicRouteNormalized.Contains("下弦杆", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("下弦", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("底弦", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("桁架下弦杆", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("下部弦杆", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("全部下弦杆", StringComparison.OrdinalIgnoreCase) ||
+                deterministicRouteNormalized.Contains("三根下弦杆", StringComparison.OrdinalIgnoreCase);
+            AppendLog("[DeterministicRouteProbe] Entered=True");
+            AppendLog($"[DeterministicRouteProbe] InputContainsLowerTrussKeyword={inputContainsLowerTrussKeyword}");
+            AppendLog($"[DeterministicRouteProbe] InputContainsLowerChordKeyword={inputContainsLowerChordKeyword}");
+            AppendLog("[DeterministicRouteProbe] TryLowerTrussBeforeLowerChord=True");
+            if (TryBuildDeterministicLowerTrussParseResult(input, out var lowerTrussParseResult))
+            {
+                if (TryGetMatchedLowerTrussKeyword(deterministicRouteNormalized, out var lowerTrussKeyword))
+                {
+                    AppendLog($"[DeterministicRouteProbe] LowerTrussMatchedKeyword={lowerTrussKeyword}");
+                }
+
+                AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=True");
+                AppendLog("[Intent] DeterministicLowerTrussParse=True");
+                AppendLog("[Intent] DeterministicLowerTrussLinkedUpdate=True");
+                await HandleParsedResultAsync(lowerTrussParseResult, string.Empty, input);
+                return;
+            }
+
+            AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=False");
+
+            if (TryBuildDeterministicLowerChordParseResult(input, out var lowerChordParseResult))
+            {
+                AppendLog(IsDeterministicLowerTrussParse(lowerChordParseResult)
+                    ? "[Intent] DeterministicLowerTrussParse=True"
+                    : "[Intent] DeterministicLowerChordParse=True");
+                await HandleParsedResultAsync(lowerChordParseResult, string.Empty, input);
+                return;
+            }
+
             if (TryBuildDeterministicUpperChordParseResult(input, out var deterministicParseResult, out var deterministicReply))
             {
                 AppendLog("[Intent] DeterministicUpperChordParse=True");
@@ -829,6 +897,8 @@ public sealed class MainViewModel : ObservableObject
                 AppendLog($"[AI] RawResponsePreview={ex.RawResponsePreview}");
                 AppendLog("[IntentGuard] FallbackLocalReply=True");
                 AppendLog("[IntentGuard] FallbackReason=LLMParseFailed");
+                AppendLog("[IntentGuard] LlmLocalReplyFallback=True");
+                AppendLog("[IntentGuard] LocalReplyMode=Template");
                 var fallbackReply = !string.IsNullOrWhiteSpace(replyOnlyIntent.FallbackReply)
                     ? replyOnlyIntent.FallbackReply
                     : BuildQuestionOnlySafetyReply(input);
@@ -865,6 +935,8 @@ public sealed class MainViewModel : ObservableObject
                 AppendLog($"[AI] LLM 处理失败：{ex.Message}", ex, "MainViewModel");
                 AppendLog("[IntentGuard] FallbackLocalReply=True");
                 AppendLog("[IntentGuard] FallbackReason=LLMFailed");
+                AppendLog("[IntentGuard] LlmLocalReplyFallback=True");
+                AppendLog("[IntentGuard] LocalReplyMode=Template");
                 var fallbackReply = !string.IsNullOrWhiteSpace(replyOnlyIntent.FallbackReply)
                     ? replyOnlyIntent.FallbackReply
                     : BuildQuestionOnlySafetyReply(input);
@@ -1043,6 +1115,8 @@ public sealed class MainViewModel : ObservableObject
         {
             llmReply = RewriteReplyOnlyAssistantReplyIfNeeded(llmReply, userInput, replyOnlyIntent);
             AppendLog("[IntentGuard] SuppressActionExecution=True");
+            AppendLog("[IntentGuard] LocalReplyMode=LlmReplyOnly");
+            AppendLog("[IntentGuard] LlmLocalReplyFallback=False");
         }
 
         if (ShouldBlockDispatchBecauseQuestion(userInput, parseResult))
@@ -1256,6 +1330,7 @@ public sealed class MainViewModel : ObservableObject
         _lastDispatchSuppressDefaultReply = false;
         _lastDispatchSucceeded = false;
         _lastExecutableActionSucceeded = false;
+        _hasQueriedEditableParameters = false;
         _pendingResetWorkspaceConfirmation = false;
         _conversationTurn = 0;
         ClearPendingModificationContext("clear_conversation");
@@ -1290,6 +1365,40 @@ public sealed class MainViewModel : ObservableObject
 
         AppendLog("[ConversationHistory] Appended UserAndAssistant=True");
         TrimConversationHistory();
+    }
+
+    private bool TryPrepareReplyOnlyLocalIntent(
+        UserIntentKind intent,
+        string intentLabel,
+        string fallbackReply,
+        out ReplyOnlyIntentContext? replyOnlyIntent)
+    {
+        AppendLog($"[IntentGuard] AlwaysUseLlmForLocalReplies={_options.AlwaysUseLlmForLocalReplies}");
+        if (!_options.AlwaysUseLlmForLocalReplies)
+        {
+            AppendLog("[IntentGuard] LocalHandled=True");
+            AppendLog("[IntentGuard] SkipLlm=True");
+            AppendLog("[IntentGuard] LocalReplyMode=Template");
+            AppendLog("[IntentGuard] LlmLocalReplyFallback=False");
+            AppendLog($"[AI Reply] {fallbackReply}");
+            AddAssistantMessage(fallbackReply);
+            AppendConversationHistory(_lastSubmittedInput, fallbackReply);
+            replyOnlyIntent = null;
+            return false;
+        }
+
+        AppendLog("[IntentGuard] LocalHandled=True");
+        AppendLog("[IntentGuard] SkipLlm=False");
+        AppendLog("[IntentGuard] LocalReplyMode=LlmReplyOnly");
+        AppendLog("[IntentGuard] LlmLocalReplyFallback=False");
+        AppendLog("[IntentGuard] SuppressActionExecution=True");
+        AppendLog("[IntentGuard] AllowedActionGeneration=False");
+        AppendLog("[IntentGuard] ReplyOnlyMode=True");
+        AppendLog("[IntentGuard] LocalTemplateRetained=True");
+        AppendLog($"[IntentGuard] LocalTemplatePreview={TruncateForLog(fallbackReply)}");
+        AppendLog("[IntentGuard] ContinueToLlmForNaturalReply=True");
+        replyOnlyIntent = new ReplyOnlyIntentContext(intent, intentLabel, fallbackReply);
+        return true;
     }
 
     private void TrimConversationHistory()
@@ -2265,7 +2374,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (actions.Any(action => string.Equals(action, "query_editable_parameters", StringComparison.OrdinalIgnoreCase)))
         {
-            return dispatchReply.Trim();
+            return BuildEditableParametersUserReply(dispatchReply);
         }
 
         return MergeAssistantReplies(llmReply, dispatchReply);
@@ -2285,6 +2394,86 @@ public sealed class MainViewModel : ObservableObject
         }
 
         return "我理解你可能在询问如何操作。为避免误操作，我还没有执行任何动作。如果你确认要执行，请用明确命令重新说明。";
+    }
+
+    private string BuildEditableParametersUserReply(string dispatchReply)
+    {
+        var isModelOpened = IsModelOpenForLocalReply();
+        var builder = new StringBuilder();
+        if (!isModelOpened)
+        {
+            builder.AppendLine("当前尚未检测到已打开模型，执行修改前请先打开或确认 SolidWorks 模型。");
+            builder.AppendLine();
+        }
+
+        var editableParameterLines = BuildEditableParameterLines();
+        builder.AppendLine("当前可编辑项：");
+        if (editableParameterLines.Count == 0)
+        {
+            builder.AppendLine("- 当前未读取到可编辑项配置，请检查参数映射配置。");
+        }
+        else
+        {
+            foreach (var line in editableParameterLines)
+            {
+                builder.Append("- ").AppendLine(line);
+            }
+        }
+
+        builder.AppendLine();
+        if (!string.IsNullOrWhiteSpace(dispatchReply) && editableParameterLines.Count == 0)
+        {
+            builder.AppendLine(dispatchReply.Trim());
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("下一步你可以这样输入：");
+        builder.AppendLine("- 把上弦杆截面改成你需要的规格");
+        builder.AppendLine("- 把下弦杆壁厚改成指定数值");
+        builder.AppendLine();
+        builder.AppendLine(isModelOpened
+            ? "模型已打开后，可继续直接说明要修改的构件，以及宽度、高度、壁厚或截面规格。"
+            : "你可以先参考以上可编辑项；执行修改前，请先打开或确认 SolidWorks 当前模型。");
+        return builder.ToString().TrimEnd();
+    }
+
+    private List<string> BuildEditableParameterLines()
+    {
+        var lines = new List<string>();
+        foreach (var member in _editableTrussMemberCatalogService.GetEnabledMembers())
+        {
+            var capabilities = new List<string>();
+            if (_editableTrussMemberCatalogService.CanExecuteFullSectionUpdate(member))
+            {
+                capabilities.Add("截面规格");
+            }
+            else
+            {
+                if (_editableTrussMemberCatalogService.CanExecuteWidthUpdate(member))
+                {
+                    capabilities.Add("宽度");
+                }
+
+                if (_editableTrussMemberCatalogService.CanExecuteHeightUpdate(member))
+                {
+                    capabilities.Add("高度");
+                }
+            }
+
+            if (_editableTrussMemberCatalogService.CanExecuteThicknessUpdate(member))
+            {
+                capabilities.Add("壁厚");
+            }
+
+            var displayName = string.IsNullOrWhiteSpace(member.Name)
+                ? member.Id
+                : member.Name.Trim();
+            lines.Add(capabilities.Count == 0
+                ? displayName
+                : $"{displayName}：可修改{string.Join("、", capabilities)}");
+        }
+
+        return lines;
     }
 
     private static string TruncateForLog(string value)
@@ -2582,6 +2771,157 @@ public sealed class MainViewModel : ObservableObject
         return true;
     }
 
+    private bool TryBuildDeterministicLowerChordParseResult(
+        string input,
+        out LlmParseResult parseResult)
+    {
+        parseResult = new LlmParseResult();
+
+        if (!_trussMemberCommandParser.TryParse(input, out var trussParseResult))
+        {
+            return false;
+        }
+
+        if (trussParseResult.TargetMemberIds.Count == 0 ||
+            trussParseResult.TargetMemberIds.Any(memberId =>
+                !memberId.StartsWith("lower_chord", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(memberId, EditableTrussMemberCatalogService.LowerTrussMemberId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var isDedicatedLowerTruss = trussParseResult.TargetMemberIds.All(memberId =>
+            string.Equals(memberId, EditableTrussMemberCatalogService.LowerTrussMemberId, StringComparison.OrdinalIgnoreCase));
+        var targetDisplayName = isDedicatedLowerTruss ? "下桁架" : "桁架下弦杆";
+
+        var parameters = new List<LlmParsedParameter>();
+        if (trussParseResult.Width.HasValue)
+        {
+            parameters.Add(CreateParsedParameter(
+                isDedicatedLowerTruss
+                    ? "lower_truss_section_width"
+                    : "truss_bottom_chord_section_width",
+                $"{targetDisplayName}截面宽度",
+                trussParseResult.Width.Value));
+        }
+
+        if (trussParseResult.Height.HasValue)
+        {
+            parameters.Add(CreateParsedParameter(
+                isDedicatedLowerTruss
+                    ? "lower_truss_section_height"
+                    : "truss_bottom_chord_section_height",
+                $"{targetDisplayName}截面高度",
+                trussParseResult.Height.Value));
+        }
+
+        if (trussParseResult.Thickness.HasValue)
+        {
+            parameters.Add(CreateParsedParameter(
+                isDedicatedLowerTruss
+                    ? "lower_truss_wall_thickness"
+                    : "truss_bottom_chord_wall_thickness",
+                $"{targetDisplayName}壁厚",
+                trussParseResult.Thickness.Value));
+        }
+
+        if (parameters.Count == 0)
+        {
+            return false;
+        }
+
+        parseResult = CreateDeterministicParseResult(
+            isDedicatedLowerTruss ? "已识别为下桁架参数修改命令。" : "已识别为桁架下弦杆参数修改命令。",
+            parameters);
+        return true;
+    }
+
+    private bool TryBuildDeterministicLowerTrussParseResult(
+        string input,
+        out LlmParseResult parseResult)
+    {
+        parseResult = new LlmParseResult();
+
+        var normalized = NormalizeIntentText(input);
+        if (!IsDedicatedLowerTrussIntent(normalized))
+        {
+            return false;
+        }
+
+        if (!TryExtractSectionValues(input, out var width, out var height, out var thickness))
+        {
+            return false;
+        }
+
+        decimal effectiveThickness;
+        if (thickness.HasValue)
+        {
+            effectiveThickness = thickness.Value;
+        }
+        else if (TryExtractThicknessValue(input, out var supplementalThickness))
+        {
+            effectiveThickness = supplementalThickness;
+        }
+        else
+        {
+            return false;
+        }
+
+        var parameters = new List<LlmParsedParameter>
+        {
+            CreateParsedParameter("lower_truss_section_width", "下桁架截面宽度", width),
+            CreateParsedParameter("lower_truss_section_height", "下桁架截面高度", height),
+            CreateParsedParameter("lower_truss_wall_thickness", "下桁架壁厚", effectiveThickness)
+        };
+
+        parseResult = CreateDeterministicParseResult("已识别为下桁架参数修改命令。", parameters);
+        return true;
+    }
+
+    private static bool IsDeterministicLowerTrussParse(LlmParseResult parseResult)
+    {
+        return parseResult.Parameters.Any(parameter =>
+            string.Equals(parameter.Name, "lower_truss_section_width", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(parameter.Name, "lower_truss_section_height", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(parameter.Name, "lower_truss_wall_thickness", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsDedicatedLowerTrussIntent(string normalized)
+    {
+        var mentionsLowerTruss =
+            normalized.Contains("下桁架", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("下部桁架", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("下层桁架", StringComparison.OrdinalIgnoreCase);
+
+        if (!mentionsLowerTruss)
+        {
+            return false;
+        }
+
+        return !normalized.Contains("下弦杆", StringComparison.OrdinalIgnoreCase) &&
+               !normalized.Contains("下弦", StringComparison.OrdinalIgnoreCase) &&
+               !normalized.Contains("底弦", StringComparison.OrdinalIgnoreCase) &&
+               !normalized.Contains("桁架下弦杆", StringComparison.OrdinalIgnoreCase) &&
+               !normalized.Contains("下部弦杆", StringComparison.OrdinalIgnoreCase) &&
+               !normalized.Contains("全部下弦杆", StringComparison.OrdinalIgnoreCase) &&
+               !normalized.Contains("三根下弦杆", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryGetMatchedLowerTrussKeyword(string normalized, out string keyword)
+    {
+        foreach (var candidate in new[] { "下桁架", "下部桁架", "下层桁架" })
+        {
+            if (normalized.Contains(candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                keyword = candidate;
+                return true;
+            }
+        }
+
+        keyword = string.Empty;
+        return false;
+    }
+
     private static bool TryExtractSectionValues(
         string input,
         out decimal width,
@@ -2861,6 +3201,7 @@ public sealed class MainViewModel : ObservableObject
         var actions = parseResult?.Actions ?? [];
         var isModificationAction = actions.Any(action => string.Equals(action, "update_solidworks_dimensions", StringComparison.OrdinalIgnoreCase));
         var isOpenModelAction = actions.Any(action => string.Equals(action, "open_working_model", StringComparison.OrdinalIgnoreCase));
+        var isQueryEditableParametersAction = actions.Any(action => string.Equals(action, "query_editable_parameters", StringComparison.OrdinalIgnoreCase));
         var isSaveAction = actions.Any(action => string.Equals(action, "save_model", StringComparison.OrdinalIgnoreCase) || string.Equals(action, "save", StringComparison.OrdinalIgnoreCase));
         var dispatchSucceeded = dispatchResult.Succeeded;
 
@@ -2871,7 +3212,13 @@ public sealed class MainViewModel : ObservableObject
         {
             _workflowStage = AssistantWorkflowStage.ModelOpenedIdle;
             _hasUnsavedModelChanges = false;
+            _hasQueriedEditableParameters = false;
             _lastSuccessfulActionSummary = "当前模型已经打开";
+        }
+
+        if (isQueryEditableParametersAction && dispatchSucceeded)
+        {
+            _hasQueriedEditableParameters = true;
         }
 
         if (isModificationAction && !dispatchSucceeded)
@@ -2967,11 +3314,23 @@ public sealed class MainViewModel : ObservableObject
             {
                 lowerWidth = value;
             }
+            else if (normalizedName.Contains("下桁架截面宽度", StringComparison.OrdinalIgnoreCase))
+            {
+                lowerWidth = value;
+            }
             else if (normalizedName.Contains("下弦杆截面高度", StringComparison.OrdinalIgnoreCase))
             {
                 lowerHeight = value;
             }
+            else if (normalizedName.Contains("下桁架截面高度", StringComparison.OrdinalIgnoreCase))
+            {
+                lowerHeight = value;
+            }
             else if (normalizedName.Contains("下弦杆壁厚", StringComparison.OrdinalIgnoreCase))
+            {
+                lowerThickness = value;
+            }
+            else if (normalizedName.Contains("下桁架壁厚", StringComparison.OrdinalIgnoreCase))
             {
                 lowerThickness = value;
             }
@@ -3023,6 +3382,14 @@ public sealed class MainViewModel : ObservableObject
         CommandDispatchResult dispatchResult,
         string fallbackReply)
     {
+        if (dispatchResult.Succeeded &&
+            !string.IsNullOrWhiteSpace(fallbackReply) &&
+            fallbackReply.Contains("模型路径：", StringComparison.Ordinal) &&
+            fallbackReply.Contains("已修改尺寸：", StringComparison.Ordinal))
+        {
+            return fallbackReply.Trim();
+        }
+
         var friendlyReply = BuildFriendlyParameterModificationSuccessReply(dispatchResult);
         if (!string.IsNullOrWhiteSpace(friendlyReply))
         {
@@ -3764,48 +4131,56 @@ public sealed class MainViewModel : ObservableObject
     private string BuildLocalIntentReply(UserIntentKind intent, string input)
     {
         var isModelOpened = IsModelOpenForLocalReply();
+        var hasQueriedEditableParameters = _hasQueriedEditableParameters || HasDimensionScanResult;
         return intent switch
         {
-            UserIntentKind.Greeting => """
-你好，我是桥梁检查车智能设计助手。你可以选择以下方向继续：
+            UserIntentKind.Greeting => isModelOpened
+                ? hasQueriedEditableParameters
+                    ? """
+你好，当前模型已打开，且可编辑项已经可以参考。
 
-1. SolidWorks 模型操作：打开当前工作模型、查看模型状态、查询可编辑参数、修改已配置的桁架杆件截面或壁厚。
-2. 结构参数设计：根据目标尺寸，协助调整桥检车相关构件参数。
-3. APDL / ANSYS 分析准备：可以协助整理有限元建模思路、材料与截面、载荷与约束、求解流程和脚本草案。若当前版本尚未接入真实 ANSYS 求解，我会明确说明。
-4. 方案说明与操作引导：你可以问我当前支持哪些功能，或者让我推荐下一步操作。
+现在请直接选择要修改的构件和参数类型，例如上弦杆或下弦杆，并说明要调整宽度、高度、壁厚或截面规格。
+""".Trim()
+                    : """
+你好，当前模型已打开。
 
-你可以输入：
-- 打开当前模型
-- 查询可编辑参数
-- 把桁架上弦杆改成 80x80x6
-- 我想准备 APDL 分析
+下一步建议先输入“查询可编辑参数”，确认当前支持修改哪些构件和尺寸；确认后再告诉我要修改哪个构件以及目标规格。
+""".Trim()
+                : """
+你好，第一次使用建议按这个顺序进行：
+1. 先打开或确认当前 SolidWorks 模型；
+2. 模型打开后，输入“查询可编辑参数”查看当前支持修改的构件；
+3. 确认要修改的构件后，再告诉我要调整的尺寸或壁厚。
 """.Trim(),
             UserIntentKind.CapabilityQuestion => """
-不是只有这些。当前已经接入并验证的主要能力集中在 SolidWorks 工作模型操作，包括打开当前模型、查询可编辑参数、修改已配置的桁架上弦杆/下弦杆截面和壁厚。
-
-同时，系统后续会扩展 APDL / ANSYS 相关能力，例如有限元模型脚本、材料和截面定义、载荷约束、求解设置、结果后处理说明等。当前如果尚未接入真实求解，我可以先协助你整理分析流程、准备 APDL 脚本草案或检查分析思路。
-
-你可以选择：
-1. 打开或查看 SolidWorks 模型；
+我目前可以协助你做这些事：
+1. 打开或检查当前 SolidWorks 模型状态；
 2. 查询当前可编辑参数；
-3. 修改桁架杆件截面或壁厚；
-4. 让我说明桥检车结构设计思路；
-5. 让我协助准备 APDL / ANSYS 分析内容。
+3. 修改已配置构件的截面尺寸或壁厚；
+4. 提供 APDL / ANSYS 相关说明和分析准备建议。
+
+如果你刚开始，请先打开模型；模型已打开则输入“查询可编辑参数”。
 """.Trim(),
             UserIntentKind.NextStepQuery => isModelOpened
-                ? """
+                ? hasQueriedEditableParameters
+                    ? """
+当前模型已打开，且可编辑项已经说明。
+
+下一步请直接选择要修改的构件和参数类型，例如上弦杆或下弦杆，并说明要调整宽度、高度、壁厚或截面规格。
+""".Trim()
+                    : """
 当前模型已打开。
 
-下一步可以输入修改命令。您可以单独修改截面、单独修改壁厚，也可以同时修改截面和壁厚。
+下一步建议先输入“查询可编辑参数”，确认当前支持修改哪些构件和尺寸。
 
-例如：
-把桁架上弦杆截面改成 80x80，壁厚改成 6
+查完之后，再告诉我要修改哪个构件，以及目标尺寸或壁厚。
 """.Trim()
                 : """
 当前还没有打开模型。
 
-下一步请先打开模型：
-开启前桁架检查车模型
+第一步请先打开模型或确认 SolidWorks 当前模型状态。
+
+模型打开后，再输入“查询可编辑参数”，确认可修改内容，然后再进行尺寸修改。
 """.Trim(),
             UserIntentKind.AmbiguousModificationCommand => BuildAmbiguousModificationReply(input),
             _ => isModelOpened
@@ -3994,7 +4369,7 @@ public sealed class MainViewModel : ObservableObject
     private static bool IsGreetingIntent(string input)
     {
         var normalized = NormalizeIntentText(input);
-        return normalized is "你好" or "您好" or "hi" or "hello" or "在吗";
+        return normalized is "你好" or "您好" or "hi" or "hello" or "在吗" or "哈喽";
     }
 
     private static bool IsCapabilityQuestionIntent(string input)
@@ -4002,10 +4377,14 @@ public sealed class MainViewModel : ObservableObject
         var normalized = NormalizeIntentText(input);
         return normalized.Contains("你只有这些功能吗", StringComparison.Ordinal) ||
                normalized.Contains("你还能做什么", StringComparison.Ordinal) ||
+               normalized.Contains("你可以做什么", StringComparison.Ordinal) ||
                normalized.Contains("你会什么", StringComparison.Ordinal) ||
                normalized.Contains("你支持哪些功能", StringComparison.Ordinal) ||
                normalized.Contains("目前有哪些功能", StringComparison.Ordinal) ||
                normalized.Contains("除了这些还能干啥", StringComparison.Ordinal) ||
+               normalized.Contains("这个软件能干什么", StringComparison.Ordinal) ||
+               normalized.Contains("这个软件可以干什么", StringComparison.Ordinal) ||
+               normalized.Contains("软件能干什么", StringComparison.Ordinal) ||
                normalized.Contains("你能做什么", StringComparison.Ordinal);
     }
 
@@ -4013,10 +4392,17 @@ public sealed class MainViewModel : ObservableObject
     {
         var normalized = NormalizeIntentText(input);
         return normalized.Contains("我接下来可以做什么", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("怎么开始", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("如何开始", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("第一步做什么", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("第一步要做什么", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("下一步做什么", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("现在怎么办", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("接下来呢", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("然后呢", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("我该怎么操作", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("我要怎么操作", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("怎么操作", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("我现在该干什么", StringComparison.OrdinalIgnoreCase) ||
                IsAskingNextStep(input);
     }

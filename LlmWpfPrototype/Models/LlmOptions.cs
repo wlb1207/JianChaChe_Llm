@@ -17,4 +17,6 @@ public sealed class LlmOptions
     public bool PrivacySafeLogging { get; set; } = true;
 
     public bool DebugVerboseLogging { get; set; }
+
+    public bool AlwaysUseLlmForLocalReplies { get; set; } = true;
 }

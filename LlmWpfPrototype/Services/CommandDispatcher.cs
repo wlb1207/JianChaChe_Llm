@@ -15,7 +15,24 @@ public sealed class CommandDispatcher
     private const string OpenWorkingModelAction = "open_working_model";
     private const string UpdateSolidWorksDimensionsAction = "update_solidworks_dimensions";
     private const string ValueModeOuterMinusTwoThickness = "OuterMinusTwoThickness";
-
+    private const string LowerTrussMemberId = EditableTrussMemberCatalogService.LowerTrussMemberId;
+    private const string LockedLowerTrussModelPath = @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\初始模型\桁架2\1-7方管70×70×5-1159.SLDPRT";
+    private const string LinkedLowerTrussModelPath = @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\新模型\桁架2\1-方管70×70×5-1159.SLDPRT";
+    private const string LinkedLowerTrussSectionModelPath = @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\新模型\桁架1\1-方管70×70×5-1530.SLDPRT";
+    private const string LinkedLowerTrussSectionPartName = "1-方管70×70×5-1530.Part";
+    private const string LinkedLowerTrussSectionWidthDimension = "D1@草图1@1-方管70×70×5-1530.Part";
+    private const string LinkedLowerTrussSectionHeightDimension = "D2@草图1@1-方管70×70×5-1530.Part";
+    private const string LinkedLowerTrussSectionThicknessDimension = "D5@拉伸-薄壁1@1-方管70×70×5-1530.Part";
+    private const string LinkedLowerChordPartRelativePath = @"新模型\桁架2\1-方管70×70×5-1159.SLDPRT";
+    private const string LinkedLowerChordPartRelativeWithNewModel = @"新模型\桁架2\1-方管70×70×5-1159.SLDPRT";
+    private const string LinkedLowerChordPartName = "1-方管70×70×5-1159.Part";
+    private const string LinkedLowerChordOuterWidthDimension = "D3@草图2@1-方管70×70×5-1159.Part";
+    private const string LinkedLowerChordOuterHeightDimension = "D1@草图2@1-方管70×70×5-1159.Part";
+    private const string LinkedLowerChordInnerWidthDimension = "D4@草图2@1-方管70×70×5-1159.Part";
+    private const string LinkedLowerChordInnerHeightDimension = "D2@草图2@1-方管70×70×5-1159.Part";
+    private const string LowerSectionLinkedCompensationPartName = "20-下-方管70×70×5-1280.Part";
+    private const string LowerSectionLinkedCompensationWidthDimension = "D1@草图1@20-下-方管70×70×5-1280.Part";
+    private const string LowerSectionLinkedCompensationHeightDimension = "D2@草图1@20-下-方管70×70×5-1280.Part";
     private readonly EditableTrussMemberCatalogService _editableTrussMemberCatalogService;
     private readonly ISolidWorksService _solidWorksService;
     private readonly TrussMemberCommandParser _trussMemberCommandParser;
@@ -408,6 +425,12 @@ public sealed class CommandDispatcher
         catch (Exception ex)
         {
             logWriter($"执行 update_solidworks_dimensions 失败：{ex}");
+            if (ex.Message.Contains("已中止：检测到目标文件不在工作区目录", StringComparison.OrdinalIgnoreCase))
+            {
+                assistantMessages.Add("已中止：检测到目标文件不在工作区目录，未保存，防止误改原始模型。");
+                return new DimensionUpdateDispatchResult(true, false, false);
+            }
+
             assistantMessages.Add(IsMissingModelPathException(ex)
                 ? "请先在 SolidWorks 中打开要修改的模型。"
                 : $"SolidWorks 尺寸更新失败：{ex.Message}");
@@ -448,7 +471,62 @@ public sealed class CommandDispatcher
             return DimensionUpdateDispatchResult.FollowUpRequired;
         }
 
+        var lowerTrussReportContext = await TryCreateLowerTrussReportContextAsync(
+            targetMembers,
+            parseResult,
+            logWriter,
+            cancellationToken);
+        if (targetMembers.Any(member => string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase)))
+        {
+            logWriter("[Intent] DeterministicLowerTrussLinkedUpdate=True");
+            if (parseResult.Width.HasValue)
+            {
+                logWriter($"[LowerTruss] Width={parseResult.Width.Value.ToString(CultureInfo.InvariantCulture)}");
+            }
+
+            if (parseResult.Height.HasValue)
+            {
+                logWriter($"[LowerTruss] Height={parseResult.Height.Value.ToString(CultureInfo.InvariantCulture)}");
+            }
+
+            if (parseResult.Thickness.HasValue)
+            {
+                logWriter($"[LowerTruss] Thickness={parseResult.Thickness.Value.ToString(CultureInfo.InvariantCulture)}");
+            }
+        }
+
+        if (lowerTrussReportContext is not null)
+        {
+            var backupResult = TryBackupLowerTrussModel(lowerTrussReportContext.ModelPath, logWriter);
+            if (!backupResult.Succeeded)
+            {
+                assistantMessages.Add(backupResult.Message);
+                return new DimensionUpdateDispatchResult(true, false, false);
+            }
+
+            lowerTrussReportContext = lowerTrussReportContext with
+            {
+                BackupPath = backupResult.BackupPath
+            };
+        }
+
         var updateRequests = await BuildTrussMemberDimensionUpdateRequestsWithPartMappingsAsync(
+            targetMembers,
+            parseResult,
+            logWriter,
+            cancellationToken);
+        var lowerChordLinkedPartPlan = await BuildLinkedLowerChordPartPlanAsync(
+            targetMembers,
+            parseResult,
+            logWriter,
+            cancellationToken);
+        var lowerSectionLinkedCompensationPlan = await BuildLowerSectionLinkedCompensationPlanAsync(
+            targetMembers,
+            parseResult,
+            logWriter,
+            cancellationToken);
+        var lowerSection1530LinkedPartPlan = await BuildLowerTrussSection1530LinkedPartPlanAsync(
+            updateRequests,
             targetMembers,
             parseResult,
             logWriter,
@@ -469,10 +547,72 @@ public sealed class CommandDispatcher
             return DimensionUpdateDispatchResult.FollowUpRequired;
         }
 
+        logWriter($"[LowerChord] TotalRequestsBeforeLinkedPart={updateRequests.Count}");
+        if (lowerChordLinkedPartPlan.Enabled && lowerChordLinkedPartPlan.PartFound && lowerChordLinkedPartPlan.Requests.Count > 0)
+        {
+            foreach (var request in lowerChordLinkedPartPlan.Requests)
+            {
+                updateRequests.Add(request);
+            }
+        }
+
+        if (lowerChordLinkedPartPlan.Enabled)
+        {
+            logWriter($"[LowerChord] TotalRequestsIncludingLinkedPart={updateRequests.Count}");
+        }
+
+        if (lowerSectionLinkedCompensationPlan.Enabled && lowerSectionLinkedCompensationPlan.Requests.Count > 0)
+        {
+            foreach (var request in lowerSectionLinkedCompensationPlan.Requests)
+            {
+                updateRequests.Add(request);
+            }
+        }
+
+        if (lowerSection1530LinkedPartPlan.Enabled && lowerSection1530LinkedPartPlan.Requests.Count > 0)
+        {
+            foreach (var request in lowerSection1530LinkedPartPlan.Requests)
+            {
+                updateRequests.Add(request);
+            }
+        }
+
         var success = await _solidWorksService.UpdateDimensionsAsync(updateRequests, logWriter, cancellationToken);
         if (success)
         {
-            return new DimensionUpdateDispatchResult(true, false, true);
+            var lowerChordLinkedPartExecutionResult = BuildLinkedLowerChordPartExecutionResult(
+                lowerChordLinkedPartPlan,
+                success);
+
+            if (lowerTrussReportContext is not null)
+            {
+                lowerTrussReportContext = await RefreshLowerTrussAfterValuesAsync(
+                    lowerTrussReportContext,
+                    logWriter,
+                    cancellationToken);
+                assistantMessages.Add(BuildLowerTrussDetailedReport(lowerTrussReportContext, updateRequests));
+            }
+
+            if (lowerChordLinkedPartExecutionResult.Enabled)
+            {
+                assistantMessages.Add(
+                    lowerChordLinkedPartExecutionResult switch
+                    {
+                        { PartFound: false } => "下弦杆已修改，但下弦杆联动零件未找到，未同步更新。",
+                        { UpdateSucceeded: true, RequestsCreatedCount: 4 } => "已完成：桁架下弦杆 60mm x 60mm x 6mm，并已同步更新下弦杆联动零件。",
+                        _ => "下弦杆已修改，但下弦杆联动零件尺寸更新失败，请查看日志。"
+                    });
+            }
+
+            if (lowerSectionLinkedCompensationPlan.Enabled && !string.IsNullOrWhiteSpace(lowerSectionLinkedCompensationPlan.ResultMessage))
+            {
+                assistantMessages.Add(lowerSectionLinkedCompensationPlan.ResultMessage);
+            }
+
+            return new DimensionUpdateDispatchResult(
+                true,
+                false,
+                !lowerChordLinkedPartExecutionResult.Enabled || !lowerChordLinkedPartExecutionResult.PartFound || lowerChordLinkedPartExecutionResult.UpdateSucceeded);
         }
 
         assistantMessages.Add("桁架构件尺寸更新失败，请检查高级调试日志。");
@@ -706,7 +846,7 @@ public sealed class CommandDispatcher
                 await AddTrussMemberRequestsFromEffectiveMappingAsync(
                     requests,
                     member,
-                    ResolveConfiguredPartFilePathPortable(item.Mapping.RelativePartPath, item.Mapping.PartFilePath, logWriter),
+                    ResolveTrussMemberPartFilePath(member, item.Mapping, logWriter),
                     item.Mapping,
                     item.Mapping.WidthDimensionName,
                     item.Mapping.HeightDimensionName,
@@ -743,6 +883,15 @@ public sealed class CommandDispatcher
             logWriter($"[TrussMapping] 构件 {member.Name} 的 {mappingSource} 零件路径为空，跳过。");
             return;
         }
+
+        LogLowerTrussLinkedPartDefinition(
+            member,
+            partFilePath,
+            widthDimensionName,
+            heightDimensionName,
+            innerWidthDimensionName,
+            innerHeightDimensionName,
+            logWriter);
 
         if (parseResult.Width.HasValue)
         {
@@ -796,6 +945,13 @@ public sealed class CommandDispatcher
 
                 if (thicknessProbe.Found)
                 {
+                    logWriter($"[TrussMapping] WallThicknessMappingScheme=DirectThicknessDimension; Member={member.Id}; Mapping={mappingSource}; DimensionName={thicknessDimensionName}");
+                    if (string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(partFilePath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        logWriter("[LowerTruss] ThinFeatureThicknessUpdate=True");
+                    }
+
                     var directThicknessRequest = CreateTrussMemberUpdateRequest(
                         member,
                         partFilePath,
@@ -831,6 +987,7 @@ public sealed class CommandDispatcher
 
             if (fallbackApplied)
             {
+                logWriter($"[TrussMapping] WallThicknessMappingScheme=InnerCutDerived; Member={member.Id}; Mapping={mappingSource}");
                 return;
             }
 
@@ -899,6 +1056,16 @@ public sealed class CommandDispatcher
         {
             throw new InvalidOperationException("壁厚数值过大，已取消修改。请确认截面尺寸和壁厚。");
         }
+
+        LogLowerTrussLinkedPartValues(
+            member,
+            partFilePath,
+            outerWidth.Value,
+            outerHeight.Value,
+            wallThickness,
+            innerWidth,
+            innerHeight,
+            logWriter);
 
         var innerWidthProbe = await _solidWorksService.ProbeDimensionAsync(
             partFilePath,
@@ -989,6 +1156,908 @@ public sealed class CommandDispatcher
         return probeResult.Found ? probeResult.CurrentValue : null;
     }
 
+    private async Task<LowerTrussReportContext?> TryCreateLowerTrussReportContextAsync(
+        IReadOnlyList<EditableTrussMemberItem> members,
+        TrussMemberCommandParseResult parseResult,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        var lowerTrussMember = members.FirstOrDefault(member =>
+            string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase));
+        if (lowerTrussMember is null)
+        {
+            return null;
+        }
+
+        var mapping = lowerTrussMember.PartMappings.FirstOrDefault();
+        if (mapping is null)
+        {
+            throw new InvalidOperationException("下桁架未配置可执行的 PartMapping。");
+        }
+
+        var configuredPath = mapping.PartFilePath?.Trim() ?? string.Empty;
+        if (!string.Equals(configuredPath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"下桁架模型路径配置错误。必须严格等于：{LockedLowerTrussModelPath}");
+        }
+
+        if (!File.Exists(configuredPath))
+        {
+            throw new FileNotFoundException($"下桁架模型不存在：{configuredPath}", configuredPath);
+        }
+
+        var modelPath = configuredPath;
+
+        var outer = parseResult.Width ?? parseResult.Height;
+        var thickness = parseResult.Thickness;
+        if (!outer.HasValue || !thickness.HasValue)
+        {
+            throw new InvalidOperationException("下桁架修改必须提供完整规格 A×A×T。");
+        }
+
+        var inner = ResolveDerivedInnerValue(
+            mapping.InnerWidthValueMode,
+            outer.Value,
+            thickness.Value,
+            "LowerTrussInnerWidth",
+            logWriter);
+        if (inner <= 0m)
+        {
+            throw new InvalidOperationException("下桁架壁厚数值过大，内边长计算结果无效。");
+        }
+
+        var dimensions = new List<LowerTrussDimensionReportItem>();
+        foreach (var dimensionName in new[]
+                 {
+                     mapping.WidthDimensionName,
+                     mapping.HeightDimensionName,
+                     mapping.InnerWidthDimensionName,
+                     mapping.InnerHeightDimensionName
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(dimensionName))
+            {
+                throw new InvalidOperationException("下桁架四个目标尺寸配置不完整。");
+            }
+
+            var probe = await _solidWorksService.ProbeDimensionAsync(
+                modelPath,
+                dimensionName,
+                logWriter,
+                cancellationToken);
+            if (!probe.Found)
+            {
+                throw new InvalidOperationException($"未找到下桁架目标尺寸：{dimensionName}");
+            }
+
+            dimensions.Add(new LowerTrussDimensionReportItem(
+                string.IsNullOrWhiteSpace(probe.ResolvedDimensionName) ? dimensionName : probe.ResolvedDimensionName,
+                probe.CurrentValue,
+                null));
+        }
+
+        return new LowerTrussReportContext(
+            lowerTrussMember.Name,
+            modelPath,
+            outer.Value,
+            thickness.Value,
+            inner,
+            dimensions,
+            string.Empty);
+    }
+
+    private async Task<LowerTrussReportContext> RefreshLowerTrussAfterValuesAsync(
+        LowerTrussReportContext context,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        var refreshedDimensions = new List<LowerTrussDimensionReportItem>(context.Dimensions.Count);
+        foreach (var item in context.Dimensions)
+        {
+            var probe = await _solidWorksService.ProbeDimensionAsync(
+                context.ModelPath,
+                item.DimensionName,
+                logWriter,
+                cancellationToken);
+
+            refreshedDimensions.Add(item with
+            {
+                AfterValue = probe.Found ? probe.CurrentValue : null
+            });
+        }
+
+        return context with
+        {
+            Dimensions = refreshedDimensions
+        };
+    }
+
+    private static LowerTrussBackupResult TryBackupLowerTrussModel(string modelPath, Action<string> logWriter)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(modelPath) || !File.Exists(modelPath))
+            {
+                return new LowerTrussBackupResult(false, "下桁架模型不存在，已停止修改。", string.Empty);
+            }
+
+            var directory = Path.GetDirectoryName(modelPath);
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return new LowerTrussBackupResult(false, "下桁架模型目录无效，已停止修改。", string.Empty);
+            }
+
+            var backupDirectory = Path.Combine(directory, "backup");
+            Directory.CreateDirectory(backupDirectory);
+            var backupPath = Path.Combine(
+                backupDirectory,
+                $"{Path.GetFileNameWithoutExtension(modelPath)}-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(modelPath)}");
+            File.Copy(modelPath, backupPath, overwrite: false);
+            logWriter($"[LowerTruss] BackupPath={backupPath}");
+            return new LowerTrussBackupResult(true, string.Empty, backupPath);
+        }
+        catch (Exception ex)
+        {
+            logWriter($"[LowerTruss] BackupFailed={ex}");
+            return new LowerTrussBackupResult(false, $"无法备份下桁架原模型，已停止修改。原因：{ex.Message}", string.Empty);
+        }
+    }
+
+    private static string BuildLowerTrussDetailedReport(
+        LowerTrussReportContext context,
+        IReadOnlyList<SolidWorksDimensionUpdateRequest> requests)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("已完成下桁架模型修改。");
+        builder.AppendLine();
+        builder.AppendLine("模型路径：");
+        builder.AppendLine(context.ModelPath);
+        builder.AppendLine();
+        builder.AppendLine("备份路径：");
+        builder.AppendLine(string.IsNullOrWhiteSpace(context.BackupPath) ? "未记录" : context.BackupPath);
+        builder.AppendLine();
+        builder.AppendLine($"识别到的构件名称：{context.MemberName}");
+        builder.AppendLine($"目标规格：{context.OuterSize:0.##}×{context.OuterSize:0.##}×{context.Thickness:0.##}");
+        builder.AppendLine();
+        builder.AppendLine("计算：");
+        builder.AppendLine($"外边长 A = {context.OuterSize:0.##}");
+        builder.AppendLine($"壁厚 T = {context.Thickness:0.##}");
+        builder.AppendLine($"内边长 B = {context.OuterSize:0.##} - 2×{context.Thickness:0.##} = {context.InnerSize:0.##}");
+        builder.AppendLine();
+        builder.AppendLine("已修改尺寸：");
+
+        foreach (var item in context.Dimensions)
+        {
+            builder.AppendLine(
+                $"{item.DimensionName}：{FormatMillimeterValue(item.BeforeValue)} -> {FormatMillimeterValue(item.AfterValue, allowUnknown: true)}");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("重建/保存：已调用 SolidWorks 重建与保存流程，UpdateDimensionsAsync 未抛异常。");
+        builder.AppendLine("修改范围：仅修改下桁架绑定模型中的上述四个尺寸。");
+        builder.Append("是否发现其他受影响内容：未发现。");
+        return builder.ToString().TrimEnd();
+    }
+
+    private async Task<LinkedLowerChordPartPlan> BuildLinkedLowerChordPartPlanAsync(
+        IReadOnlyList<EditableTrussMemberItem> members,
+        TrussMemberCommandParseResult parseResult,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        var isLowerChordModification = members.Any(member =>
+            member.Id.StartsWith("lower_chord", StringComparison.OrdinalIgnoreCase));
+        if (!isLowerChordModification)
+        {
+            return LinkedLowerChordPartPlan.Disabled;
+        }
+
+        var linkedPartPath = ResolveLinkedLowerChordPartPath(logWriter);
+        logWriter("[LinkedLowerChordPart] Enabled=True");
+        logWriter("[VersionMarker] LinkedLowerChordPartPathResolver v5 loaded");
+        logWriter("[LinkedLowerChordPart] ResolverVersion=ExactRealFileNameV5");
+        logWriter("[LinkedLowerChordPart] Trigger=LowerChordModification");
+        logWriter($"[LinkedPart] TargetPath={linkedPartPath}");
+        logWriter($"[LinkedPart] Exists={(!string.IsNullOrWhiteSpace(linkedPartPath) && File.Exists(linkedPartPath))}");
+        logWriter($"[LinkedPart] RequestedSpec={BuildLinkedPartRequestedSpec(parseResult)}");
+        logWriter($"[LinkedPart] ModifySpec={BuildLinkedPartRequestedSpec(parseResult)}");
+
+        if (string.IsNullOrWhiteSpace(linkedPartPath) || !File.Exists(linkedPartPath))
+        {
+            throw new InvalidOperationException("已中止：下弦杆联动零件不存在，未执行修改。");
+        }
+
+        logWriter($"[LinkedPart] BeforeLastWriteTime={File.GetLastWriteTime(linkedPartPath):O}");
+
+        decimal? outerWidth = parseResult.Width;
+        decimal? outerHeight = parseResult.Height;
+        decimal? thickness = parseResult.Thickness;
+
+        var requests = new List<SolidWorksDimensionUpdateRequest>();
+
+        if (!outerWidth.HasValue)
+        {
+            outerWidth = await ProbeLinkedLowerChordDimensionValueAsync(
+                linkedPartPath,
+                LinkedLowerChordOuterWidthDimension,
+                "D3",
+                logWriter,
+                cancellationToken);
+        }
+
+        if (!outerHeight.HasValue)
+        {
+            outerHeight = await ProbeLinkedLowerChordDimensionValueAsync(
+                linkedPartPath,
+                LinkedLowerChordOuterHeightDimension,
+                "D1",
+                logWriter,
+                cancellationToken);
+        }
+
+        if (outerWidth.HasValue)
+        {
+            logWriter($"[LinkedLowerChordPart] OuterWidth={outerWidth.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        if (outerHeight.HasValue)
+        {
+            logWriter($"[LinkedLowerChordPart] OuterHeight={outerHeight.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        if (thickness.HasValue)
+        {
+            logWriter($"[LinkedLowerChordPart] Thickness={thickness.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        logWriter("[LinkedPart] Applying linked lower chord update");
+
+        if (parseResult.Width.HasValue)
+        {
+            AddLinkedLowerChordPartRequest(
+                requests,
+                linkedPartPath,
+                LinkedLowerChordOuterWidthDimension,
+                parseResult.Width.Value,
+                logWriter);
+        }
+
+        if (parseResult.Height.HasValue)
+        {
+            AddLinkedLowerChordPartRequest(
+                requests,
+                linkedPartPath,
+                LinkedLowerChordOuterHeightDimension,
+                parseResult.Height.Value,
+                logWriter);
+        }
+
+        if (!thickness.HasValue)
+        {
+            logWriter("[LinkedLowerChordPart] SkipInnerSizeUpdate Reason=ThicknessNotProvided");
+            logWriter($"[LinkedLowerChordPart] CreatedRequestsCount={requests.Count}");
+            logWriter($"[LowerChord] TotalRequestsIncludingLinkedPart={9 + requests.Count}");
+            return new LinkedLowerChordPartPlan(true, true, linkedPartPath, requests);
+        }
+
+        if (!outerWidth.HasValue || !outerHeight.HasValue)
+        {
+            logWriter("[LinkedLowerChordPart] Skip Reason=OuterSizeUnknownForThicknessOnly");
+            logWriter($"[LinkedLowerChordPart] CreatedRequestsCount={requests.Count}");
+            logWriter($"[LowerChord] TotalRequestsIncludingLinkedPart={9 + requests.Count}");
+            return new LinkedLowerChordPartPlan(true, true, linkedPartPath, requests);
+        }
+
+        var innerWidth = outerWidth.Value - (2m * thickness.Value);
+        var innerHeight = outerHeight.Value - (2m * thickness.Value);
+        if (innerWidth <= 0m || innerHeight <= 0m)
+        {
+            throw new InvalidOperationException("下弦杆联动零件的内尺寸计算结果无效，请确认截面尺寸和壁厚。");
+        }
+
+        logWriter($"[LinkedLowerChordPart] InnerWidth={innerWidth.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[LinkedLowerChordPart] InnerHeight={innerHeight.ToString(CultureInfo.InvariantCulture)}");
+
+        AddLinkedLowerChordPartRequest(
+            requests,
+            linkedPartPath,
+            LinkedLowerChordInnerWidthDimension,
+            innerWidth,
+            logWriter);
+        AddLinkedLowerChordPartRequest(
+            requests,
+            linkedPartPath,
+            LinkedLowerChordInnerHeightDimension,
+            innerHeight,
+            logWriter);
+
+        logWriter($"[LinkedLowerChordPart] CreatedRequestsCount={requests.Count}");
+        logWriter($"[LowerChord] TotalRequestsIncludingLinkedPart={9 + requests.Count}");
+        return new LinkedLowerChordPartPlan(true, true, linkedPartPath, requests);
+    }
+
+    private static void AddLinkedLowerChordPartRequest(
+        ICollection<SolidWorksDimensionUpdateRequest> requests,
+        string partFilePath,
+        string dimensionName,
+        decimal value,
+        Action<string> logWriter)
+    {
+        requests.Add(new SolidWorksDimensionUpdateRequest
+        {
+            ParameterName = $"linked_lower_chord_part.{dimensionName}",
+            DisplayName = $"下弦杆联动零件{TrimPartSuffix(dimensionName)}",
+            PartFilePath = partFilePath,
+            Configuration = string.Empty,
+            DimensionName = dimensionName,
+            Value = value.ToString(CultureInfo.InvariantCulture),
+            Unit = "mm"
+        });
+
+        logWriter($"[LinkedLowerChordPart] Created request. DimensionName={dimensionName}, Value={value.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    private async Task<LowerSectionLinkedCompensationPlan> BuildLowerSectionLinkedCompensationPlanAsync(
+        IReadOnlyList<EditableTrussMemberItem> members,
+        TrussMemberCommandParseResult parseResult,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        var linkedMember = members.FirstOrDefault(IsLowerSectionLinkedCompensationMember);
+        var sectionChanged = linkedMember is not null &&
+                             parseResult.Width.HasValue &&
+                             parseResult.Height.HasValue;
+        if (!sectionChanged)
+        {
+            return LowerSectionLinkedCompensationPlan.Disabled;
+        }
+
+        var targetWidth = parseResult.Width!.Value;
+        var targetHeight = parseResult.Height!.Value;
+        var thicknessText = parseResult.Thickness?.ToString("0.##", CultureInfo.InvariantCulture) ?? "?";
+        var targetSectionText = $"{targetWidth:0.##}x{targetHeight:0.##}x{thicknessText}";
+        var rule = TrussLinkedParameterRules.LowerSectionLinkedPartCompensation;
+
+        logWriter("[LinkedPartCompensation] LowerTruss linked compensation enabled");
+        logWriter($"[LinkedPartCompensation] TriggerMember={linkedMember!.Id}");
+        logWriter($"[LinkedPartCompensation] TargetSection={targetSectionText}");
+
+        if (targetWidth > rule.BaseUpperChordSectionMm)
+        {
+            var rejectedMessage = $"下桁架/下弦杆已修改，但关联零件补偿未执行：目标宽度 {targetWidth:0.##}mm 大于 70mm，当前仅支持 70mm 及以下的补偿规则。";
+            logWriter($"[LinkedPartCompensation] AppendRequest=False");
+            logWriter($"[LinkedPartCompensation] Error=TargetWidthExceedsSupportedBase; Width={targetWidth.ToString(CultureInfo.InvariantCulture)}");
+            return new LowerSectionLinkedCompensationPlan(true, false, false, string.Empty, rejectedMessage, Array.Empty<SolidWorksDimensionUpdateRequest>());
+        }
+
+        var candidateParts = ResolveLinkedRulePartPaths(rule, logWriter);
+        var selectedPartPath = SelectPreferredLowerSectionLinkedCompensationPartPath(candidateParts);
+        if (string.IsNullOrWhiteSpace(selectedPartPath))
+        {
+            logWriter("[LinkedPartCompensation] AppendRequest=False");
+            logWriter("[LinkedPartCompensation] Error=TargetPartNotFound");
+            return new LowerSectionLinkedCompensationPlan(
+                true,
+                false,
+                false,
+                string.Empty,
+                "下桁架/下弦杆已修改，但未找到关联补偿零件 20-下-方管70×70×5-1280，未同步更新。",
+                Array.Empty<SolidWorksDimensionUpdateRequest>());
+        }
+
+        logWriter($"[LinkedPartCompensation] Path={selectedPartPath}");
+
+        var widthDimensionName = await ResolveLinkedRuleDimensionNameAsync(
+            selectedPartPath,
+            BuildPartSpecificDimensionNameCandidates(
+                selectedPartPath,
+                [
+                    LowerSectionLinkedCompensationWidthDimension,
+                    "D1@草图1",
+                    "D1"
+                ]),
+            logWriter,
+            cancellationToken);
+        var heightDimensionName = await ResolveLinkedRuleDimensionNameAsync(
+            selectedPartPath,
+            BuildPartSpecificDimensionNameCandidates(
+                selectedPartPath,
+                [
+                    LowerSectionLinkedCompensationHeightDimension,
+                    "D2@草图1",
+                    "D2",
+                    "D20@草图1",
+                    "D20"
+                ]),
+            logWriter,
+            cancellationToken);
+        if (string.IsNullOrWhiteSpace(widthDimensionName) ||
+            string.IsNullOrWhiteSpace(heightDimensionName))
+        {
+            logWriter("[LinkedPartCompensation] AppendRequest=False");
+            logWriter($"[LinkedPartCompensation] WidthDimensionResolved={!string.IsNullOrWhiteSpace(widthDimensionName)}");
+            logWriter($"[LinkedPartCompensation] HeightDimensionResolved={!string.IsNullOrWhiteSpace(heightDimensionName)}");
+            return new LowerSectionLinkedCompensationPlan(
+                true,
+                true,
+                false,
+                selectedPartPath,
+                "下桁架/下弦杆已修改，但关联补偿零件的目标尺寸名未全部解析成功，请查看日志。",
+                Array.Empty<SolidWorksDimensionUpdateRequest>());
+        }
+
+        var requests = new List<SolidWorksDimensionUpdateRequest>();
+        AddLowerSectionLinkedCompensationRequest(
+            requests,
+            selectedPartPath,
+            widthDimensionName,
+            "关联零件截面宽度",
+            "linked_lower_section_compensation.width",
+            targetWidth,
+            logWriter);
+        logWriter($"[LinkedPartCompensation] Set D1@草图1={targetWidth:0.##}mm");
+        AddLowerSectionLinkedCompensationRequest(
+            requests,
+            selectedPartPath,
+            heightDimensionName,
+            "关联零件截面高度",
+            "linked_lower_section_compensation.height",
+            targetHeight,
+            logWriter);
+        logWriter($"[LinkedPartCompensation] Set D20@草图1={targetHeight:0.##}mm");
+
+        return new LowerSectionLinkedCompensationPlan(true, true, true, selectedPartPath, string.Empty, requests);
+    }
+
+    private static void AddLowerSectionLinkedCompensationRequest(
+        ICollection<SolidWorksDimensionUpdateRequest> requests,
+        string partFilePath,
+        string dimensionName,
+        string displayName,
+        string parameterName,
+        decimal value,
+        Action<string> logWriter)
+    {
+        requests.Add(new SolidWorksDimensionUpdateRequest
+        {
+            ParameterName = parameterName,
+            DisplayName = displayName,
+            PartFilePath = partFilePath,
+            Configuration = string.Empty,
+            DimensionName = dimensionName,
+            Value = value.ToString(CultureInfo.InvariantCulture),
+            Unit = "mm"
+        });
+
+        logWriter($"[LinkedPartCompensation] Created request. PartFilePath={partFilePath}, DimensionName={dimensionName}, Value={value.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    private async Task<LinkedLowerTrussSectionPartPlan> BuildLowerTrussSection1530LinkedPartPlanAsync(
+        IReadOnlyCollection<SolidWorksDimensionUpdateRequest> existingRequests,
+        IReadOnlyList<EditableTrussMemberItem> members,
+        TrussMemberCommandParseResult parseResult,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        var isLowerSectionModification = members.Any(IsLowerSectionLinkedCompensationMember);
+        if (!isLowerSectionModification)
+        {
+            return LinkedLowerTrussSectionPartPlan.Disabled;
+        }
+
+        if (!parseResult.Width.HasValue || !parseResult.Height.HasValue || !parseResult.Thickness.HasValue)
+        {
+            logWriter("[Linked1530Part] Skip Reason=IncompleteSectionSpec");
+            logWriter($"[Linked1530Part] RequestedSpec={BuildLinkedPartRequestedSpec(parseResult)}");
+            return LinkedLowerTrussSectionPartPlan.Disabled;
+        }
+
+        if (existingRequests.Any(request =>
+                string.Equals(request.PartFilePath, LinkedLowerTrussSectionModelPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            logWriter("[Linked1530Part] Skip Reason=RequestsAlreadyGenerated");
+            logWriter($"[Linked1530Part] TargetPath={LinkedLowerTrussSectionModelPath}");
+            return LinkedLowerTrussSectionPartPlan.Disabled;
+        }
+
+        logWriter("[Linked1530Part] Enabled=True");
+        logWriter("[Linked1530Part] Trigger=LowerChordOrLowerTrussSectionModification");
+        logWriter($"[Linked1530Part] TargetPath={LinkedLowerTrussSectionModelPath}");
+        logWriter($"[Linked1530Part] Exists={File.Exists(LinkedLowerTrussSectionModelPath)}");
+        logWriter($"[Linked1530Part] RequestedSpec={BuildLinkedPartRequestedSpec(parseResult)}");
+
+        if (!File.Exists(LinkedLowerTrussSectionModelPath))
+        {
+            logWriter("[Linked1530Part] Skip Reason=TargetPartNotFound");
+            return LinkedLowerTrussSectionPartPlan.Disabled;
+        }
+
+        var widthDimensionName = await ResolveLinkedRuleDimensionNameAsync(
+            LinkedLowerTrussSectionModelPath,
+            BuildPartSpecificDimensionNameCandidates(
+                LinkedLowerTrussSectionModelPath,
+                [
+                    LinkedLowerTrussSectionWidthDimension,
+                    "D1@草图1",
+                    "D1"
+                ]),
+            logWriter,
+            cancellationToken);
+        var heightDimensionName = await ResolveLinkedRuleDimensionNameAsync(
+            LinkedLowerTrussSectionModelPath,
+            BuildPartSpecificDimensionNameCandidates(
+                LinkedLowerTrussSectionModelPath,
+                [
+                    LinkedLowerTrussSectionHeightDimension,
+                    "D2@草图1",
+                    "D2"
+                ]),
+            logWriter,
+            cancellationToken);
+        var thicknessDimensionName = await ResolveLinkedRuleDimensionNameAsync(
+            LinkedLowerTrussSectionModelPath,
+            BuildPartSpecificDimensionNameCandidates(
+                LinkedLowerTrussSectionModelPath,
+                [
+                    LinkedLowerTrussSectionThicknessDimension,
+                    "T1@拉伸-薄壁1",
+                    "T1"
+                ]),
+            logWriter,
+            cancellationToken);
+
+        logWriter($"[Linked1530Part] WidthDimensionResolved={!string.IsNullOrWhiteSpace(widthDimensionName)}");
+        logWriter($"[Linked1530Part] HeightDimensionResolved={!string.IsNullOrWhiteSpace(heightDimensionName)}");
+        logWriter($"[Linked1530Part] ThicknessDimensionResolved={!string.IsNullOrWhiteSpace(thicknessDimensionName)}");
+
+        if (string.IsNullOrWhiteSpace(thicknessDimensionName))
+        {
+            logWriter($"[Linked1530Part] ThicknessDimensionExpected={LinkedLowerTrussSectionThicknessDimension}");
+            logWriter("[Linked1530Part] Skip Reason=ThicknessDimensionNotConfirmed");
+            return LinkedLowerTrussSectionPartPlan.Disabled;
+        }
+
+        if (string.IsNullOrWhiteSpace(widthDimensionName) || string.IsNullOrWhiteSpace(heightDimensionName))
+        {
+            logWriter("[Linked1530Part] Skip Reason=SectionDimensionNotConfirmed");
+            return LinkedLowerTrussSectionPartPlan.Disabled;
+        }
+
+        var requests = new List<SolidWorksDimensionUpdateRequest>();
+        AddLinkedLowerTrussSection1530Request(
+            requests,
+            LinkedLowerTrussSectionModelPath,
+            widthDimensionName,
+            "linked_lower_truss_section_1530.width",
+            "下部联动零件1530截面宽度",
+            parseResult.Width.Value,
+            logWriter);
+        AddLinkedLowerTrussSection1530Request(
+            requests,
+            LinkedLowerTrussSectionModelPath,
+            heightDimensionName,
+            "linked_lower_truss_section_1530.height",
+            "下部联动零件1530截面高度",
+            parseResult.Height.Value,
+            logWriter);
+        AddLinkedLowerTrussSection1530Request(
+            requests,
+            LinkedLowerTrussSectionModelPath,
+            thicknessDimensionName,
+            "linked_lower_truss_section_1530.thickness",
+            "下部联动零件1530壁厚",
+            parseResult.Thickness.Value,
+            logWriter);
+
+        logWriter($"[Linked1530Part] {Path.GetFileName(LinkedLowerTrussSectionModelPath)}: {TrimPartSuffix(widthDimensionName)} = {parseResult.Width.Value.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[Linked1530Part] {Path.GetFileName(LinkedLowerTrussSectionModelPath)}: {TrimPartSuffix(heightDimensionName)} = {parseResult.Height.Value.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[Linked1530Part] {Path.GetFileName(LinkedLowerTrussSectionModelPath)}: {TrimPartSuffix(thicknessDimensionName)} = {parseResult.Thickness.Value.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[Linked1530Part] CreatedRequestsCount={requests.Count}");
+
+        return new LinkedLowerTrussSectionPartPlan(true, true, LinkedLowerTrussSectionModelPath, requests);
+    }
+
+    private static void AddLinkedLowerTrussSection1530Request(
+        ICollection<SolidWorksDimensionUpdateRequest> requests,
+        string partFilePath,
+        string dimensionName,
+        string parameterName,
+        string displayName,
+        decimal value,
+        Action<string> logWriter)
+    {
+        requests.Add(new SolidWorksDimensionUpdateRequest
+        {
+            ParameterName = parameterName,
+            DisplayName = displayName,
+            PartFilePath = partFilePath,
+            Configuration = string.Empty,
+            DimensionName = dimensionName,
+            Value = value.ToString(CultureInfo.InvariantCulture),
+            Unit = "mm"
+        });
+
+        logWriter($"[Linked1530Part] Created request. PartFilePath={partFilePath}, DimensionName={dimensionName}, Value={value.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    private static string BuildLinkedPartRequestedSpec(TrussMemberCommandParseResult parseResult)
+    {
+        var width = parseResult.Width?.ToString("0.##", CultureInfo.InvariantCulture) ?? "?";
+        var height = parseResult.Height?.ToString("0.##", CultureInfo.InvariantCulture) ?? "?";
+        var thickness = parseResult.Thickness?.ToString("0.##", CultureInfo.InvariantCulture) ?? "?";
+        return $"{width}x{height}x{thickness}";
+    }
+
+    private static LinkedLowerChordPartExecutionResult BuildLinkedLowerChordPartExecutionResult(
+        LinkedLowerChordPartPlan plan,
+        bool mainUpdateSucceeded)
+    {
+        if (!plan.Enabled)
+        {
+            return LinkedLowerChordPartExecutionResult.Disabled;
+        }
+
+        if (!plan.PartFound)
+        {
+            return new LinkedLowerChordPartExecutionResult(true, false, false, plan.PartPath, plan.Requests.Count);
+        }
+
+        return new LinkedLowerChordPartExecutionResult(true, true, mainUpdateSucceeded, plan.PartPath, plan.Requests.Count);
+    }
+
+    private async Task<decimal?> ProbeLinkedLowerChordDimensionValueAsync(
+        string partFilePath,
+        string fullDimensionName,
+        string baseName,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        foreach (var candidate in BuildLinkedLowerChordDimensionCandidates(fullDimensionName, baseName))
+        {
+            var probe = await _solidWorksService.ProbeDimensionAsync(
+                partFilePath,
+                candidate,
+                logWriter,
+                cancellationToken);
+            if (probe.Found)
+            {
+                return probe.CurrentValue;
+            }
+        }
+
+        return null;
+    }
+
+    private string ResolveLinkedLowerChordPartPath(Action<string> logWriter)
+    {
+        const string fixedRelativePath = @"桁架2\1-方管70×70×5-1159.SLDPRT";
+        var workingModelPath = string.IsNullOrWhiteSpace(_workspaceManager.WorkingModelPath)
+            ? _workspaceManager.WorkingModelFolder
+            : _workspaceManager.WorkingModelPath;
+
+        logWriter($"[LinkedPart] WorkingModelPath={workingModelPath}");
+        logWriter($"[LinkedPart] FixedRelativePath={fixedRelativePath}");
+
+        if (string.IsNullOrWhiteSpace(workingModelPath))
+        {
+            logWriter("[LinkedPart] FixedFullPath=");
+            return string.Empty;
+        }
+
+        var fixedFullPath = Path.GetFullPath(Path.Combine(
+            workingModelPath,
+            fixedRelativePath));
+
+        logWriter($"[LinkedPart] FixedFullPath={fixedFullPath}");
+        return fixedFullPath;
+    }
+
+    private string TryResolveLinkedLowerChordNewModelFolder()
+    {
+        var candidates = new[]
+        {
+            _workspaceManager.WorkingModelFolder,
+            _workspaceManager.CurrentAssemblyPath,
+            _workspaceManager.WorkingModelPath
+        };
+
+        foreach (var candidate in candidates)
+        {
+            var folder = ResolveContainingNewModelFolder(candidate);
+            if (!string.IsNullOrWhiteSpace(folder))
+            {
+                return folder;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private IEnumerable<string> BuildLinkedLowerChordSearchRoots()
+    {
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddIfExists(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            var normalized = Path.GetFullPath(path);
+            roots.Add(normalized);
+        }
+
+        AddIfExists(Path.GetDirectoryName(_workspaceManager.CurrentAssemblyPath));
+        AddIfExists(_workspaceManager.WorkingModelFolder);
+        AddIfExists(Directory.GetParent(_workspaceManager.WorkingModelFolder)?.FullName);
+
+        var solidworksModelFolder = ResolveContainingFolderSegment(_workspaceManager.WorkingModelFolder, "Solidworks模型");
+        if (!string.IsNullOrWhiteSpace(solidworksModelFolder))
+        {
+            AddIfExists(solidworksModelFolder);
+        }
+
+        return roots;
+    }
+
+    private static string ResolveContainingNewModelFolder(string? path)
+    {
+        return ResolveContainingFolderSegment(path, "新模型");
+    }
+
+    private static string ResolveContainingFolderSegment(string? path, string segment)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var parts = fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (!string.Equals(parts[i], segment, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return string.Join(Path.DirectorySeparatorChar, parts.Take(i + 1));
+        }
+
+        return string.Empty;
+    }
+
+    private static IReadOnlyList<string> BuildLinkedLowerChordDimensionCandidates(string fullDimensionName, string baseName)
+    {
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && seen.Add(value))
+            {
+                candidates.Add(value);
+            }
+        }
+
+        Add(fullDimensionName);
+        Add($"{baseName}@草图2");
+        Add(baseName);
+        return candidates;
+    }
+
+    private string ResolveTrussMemberPartFilePath(
+        EditableTrussMemberItem member,
+        EditableTrussMemberPartMapping mapping,
+        Action<string> logWriter)
+    {
+        if (!string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase))
+        {
+            return ResolveConfiguredPartFilePathPortable(mapping.RelativePartPath, mapping.PartFilePath, logWriter);
+        }
+
+        var configuredPath = mapping.PartFilePath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(configuredPath))
+        {
+            throw new InvalidOperationException("下桁架 PartMapping 缺少固定零件路径配置。");
+        }
+
+        if (string.Equals(configuredPath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
+            !File.Exists(configuredPath))
+        {
+            throw new FileNotFoundException($"下桁架模型不存在：{configuredPath}", configuredPath);
+        }
+
+        if (string.Equals(configuredPath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
+            !File.Exists(configuredPath))
+        {
+            throw new FileNotFoundException($"下桁架联动零件不存在：{configuredPath}", configuredPath);
+        }
+
+        if (string.Equals(configuredPath, LinkedLowerTrussSectionModelPath, StringComparison.OrdinalIgnoreCase) &&
+            !File.Exists(configuredPath))
+        {
+            throw new FileNotFoundException($"下桁架联动零件不存在：{configuredPath}", configuredPath);
+        }
+
+        if (!string.Equals(configuredPath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(configuredPath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(configuredPath, LinkedLowerTrussSectionModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"下桁架 PartMapping 路径未在允许列表中：{configuredPath}");
+        }
+
+        return configuredPath;
+    }
+
+    private static void LogLowerTrussLinkedPartDefinition(
+        EditableTrussMemberItem member,
+        string partFilePath,
+        string widthDimensionName,
+        string heightDimensionName,
+        string innerWidthDimensionName,
+        string innerHeightDimensionName,
+        Action<string> logWriter)
+    {
+        if (!string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(partFilePath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        logWriter("[LinkedLowerTrussPart] Enabled=True");
+        logWriter($"[LinkedLowerTrussPart] PartPath={partFilePath}");
+        logWriter($"[LinkedLowerTrussPart] OuterWidthDimension={TrimPartSuffix(widthDimensionName)}");
+        logWriter($"[LinkedLowerTrussPart] OuterHeightDimension={TrimPartSuffix(heightDimensionName)}");
+        logWriter($"[LinkedLowerTrussPart] InnerWidthDimension={TrimPartSuffix(innerWidthDimensionName)}");
+        logWriter($"[LinkedLowerTrussPart] InnerHeightDimension={TrimPartSuffix(innerHeightDimensionName)}");
+    }
+
+    private static void LogLowerTrussLinkedPartValues(
+        EditableTrussMemberItem member,
+        string partFilePath,
+        decimal outerWidth,
+        decimal outerHeight,
+        decimal thickness,
+        decimal innerWidth,
+        decimal innerHeight,
+        Action<string> logWriter)
+    {
+        if (!string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(partFilePath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        logWriter($"[LinkedLowerTrussPart] OuterWidth={outerWidth.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[LinkedLowerTrussPart] OuterHeight={outerHeight.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[LinkedLowerTrussPart] Thickness={thickness.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[LinkedLowerTrussPart] InnerWidth={innerWidth.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[LinkedLowerTrussPart] InnerHeight={innerHeight.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    private static string TrimPartSuffix(string dimensionName)
+    {
+        if (string.IsNullOrWhiteSpace(dimensionName))
+        {
+            return string.Empty;
+        }
+
+        var lastAt = dimensionName.LastIndexOf('@');
+        return lastAt > 0 ? dimensionName[..lastAt] : dimensionName;
+    }
+
+    private static string FormatMillimeterValue(decimal? value, bool allowUnknown = false)
+    {
+        if (value.HasValue)
+        {
+            return $"{value.Value:0.##}";
+        }
+
+        return allowUnknown ? "读取失败" : "未知";
+    }
+
     private SolidWorksDimensionUpdateRequest CreateTrussMemberUpdateRequest(
         EditableTrussMemberItem member,
         string partFilePath,
@@ -1036,6 +2105,92 @@ public sealed class CommandDispatcher
         }
 
         return string.Empty;
+    }
+
+    private IReadOnlyList<string> BuildLowerSectionLinkedCompensationExtrudeDimensionCandidates(
+        string partFilePath,
+        TrussLinkedParameterRule rule,
+        Action<string> logWriter)
+    {
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string? candidate)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && seen.Add(candidate))
+            {
+                candidates.Add(candidate);
+                logWriter($"[LinkedPartCompensation] ExtrudeDimensionCandidate={candidate}");
+            }
+        }
+
+        var scanItems = _dimensionScanCatalogService.LoadLatestResultOrEmpty().Items;
+        var normalizedPartFilePath = NormalizeScanPartFilePath(partFilePath);
+        var scanItemsWithPath = scanItems
+            .Where(item => !string.IsNullOrWhiteSpace(item.PartFilePath))
+            .ToList();
+        var exactPathMatches = scanItemsWithPath
+            .Where(item => string.Equals(
+                NormalizeScanPartFilePath(item.PartFilePath),
+                normalizedPartFilePath,
+                StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        IEnumerable<SolidWorksDimensionScanItem> selectedScanItems;
+        if (exactPathMatches.Count > 0)
+        {
+            logWriter($"[LinkedPartCompensation] ScanMatchMode=FullPath; ScanMatches={exactPathMatches.Count}");
+            selectedScanItems = exactPathMatches;
+        }
+        else
+        {
+            if (scanItemsWithPath.Count == 0)
+            {
+                logWriter("[LinkedPartCompensation] ScanMatchMode=FileNameFallback; Reason=ScanItemsMissingPartFilePath");
+            }
+            else
+            {
+                logWriter("[LinkedPartCompensation] ScanMatchMode=FileNameFallback; Reason=FullPathMatchNotFound");
+            }
+
+            selectedScanItems = scanItems.Where(item => string.Equals(
+                Path.GetFileName(item.PartFilePath),
+                Path.GetFileName(partFilePath),
+                StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (var item in selectedScanItems)
+        {
+            var fullName = string.IsNullOrWhiteSpace(item.FullDimensionName) ? item.DimensionName : item.FullDimensionName;
+            if (string.IsNullOrWhiteSpace(fullName) ||
+                !fullName.StartsWith("D1@", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (ContainsLinkedCompensationExtrudeFeatureToken(fullName) ||
+                ContainsLinkedCompensationExtrudeFeatureToken(item.FeatureName))
+            {
+                Add(fullName);
+            }
+        }
+
+        foreach (var candidate in BuildPartSpecificDimensionNameCandidates(partFilePath, rule.DimensionNameCandidates))
+        {
+            Add(candidate);
+        }
+
+        return candidates;
+    }
+
+    private static string NormalizeScanPartFilePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        return Path.GetFullPath(path.Trim());
     }
 
     private static IReadOnlyList<string> BuildPartSpecificDimensionNameCandidates(
@@ -1158,6 +2313,48 @@ public sealed class CommandDispatcher
     {
         return string.Equals(member.Id, TrussLinkedParameterRules.UpperChordMemberId, StringComparison.OrdinalIgnoreCase) ||
                string.Equals(member.MemberRole, "UpperChord", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLowerSectionLinkedCompensationMember(EditableTrussMemberItem member)
+    {
+        return string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) ||
+               member.Id.StartsWith("lower_chord", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SelectPreferredLowerSectionLinkedCompensationPartPath(IReadOnlyList<string> candidateParts)
+    {
+        if (candidateParts.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var preferredNonBackup = candidateParts.FirstOrDefault(path =>
+            path.Contains($"{Path.DirectorySeparatorChar}桁架2{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) &&
+            !path.Contains($"{Path.DirectorySeparatorChar}backup{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(preferredNonBackup))
+        {
+            return preferredNonBackup;
+        }
+
+        var nonBackup = candidateParts.FirstOrDefault(path =>
+            !path.Contains($"{Path.DirectorySeparatorChar}backup{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+        return string.IsNullOrWhiteSpace(nonBackup)
+            ? candidateParts[0]
+            : nonBackup;
+    }
+
+    private static bool ContainsLinkedCompensationExtrudeFeatureToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("拉伸", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("拉伸-薄壁", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("凸台-拉伸", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("Boss-Extrude", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("Extrude", StringComparison.OrdinalIgnoreCase);
     }
 
     private string ResolveWorkingPartPath(SolidWorksTarget target, Action<string> logWriter)
@@ -1358,6 +2555,18 @@ public sealed class CommandDispatcher
         if (Path.IsPathRooted(normalizedPath))
         {
             AddPortableCandidatePath(candidates, "AbsoluteRaw", normalizedPath);
+            var rootedAfterNewModelPath = TryTrimPortableAfterDirectorySegment(normalizedPath, "新模型");
+            if (!string.IsNullOrWhiteSpace(rootedAfterNewModelPath))
+            {
+                AddPortableCandidatePath(candidates, "WorkingPlusAfterNewModel", Path.Combine(workingModelPath, rootedAfterNewModelPath));
+            }
+
+            var rootedFromTrussPath = TryTrimPortableFromTrussFolder(normalizedPath);
+            if (!string.IsNullOrWhiteSpace(rootedFromTrussPath))
+            {
+                AddPortableCandidatePath(candidates, "WorkingPlusFromTrussFolder", Path.Combine(workingModelPath, rootedFromTrussPath));
+            }
+
             return candidates;
         }
 
@@ -1639,5 +2848,65 @@ public sealed record CommandDispatchResult(
 internal sealed record DimensionUpdateDispatchResult(bool Handled, bool RequiresFollowUp, bool Succeeded)
 {
     public static DimensionUpdateDispatchResult FollowUpRequired { get; } = new(false, true, false);
+}
+
+internal sealed record LowerTrussDimensionReportItem(string DimensionName, decimal? BeforeValue, decimal? AfterValue);
+
+internal sealed record LowerTrussReportContext(
+    string MemberName,
+    string ModelPath,
+    decimal OuterSize,
+    decimal Thickness,
+    decimal InnerSize,
+    IReadOnlyList<LowerTrussDimensionReportItem> Dimensions,
+    string BackupPath);
+
+internal sealed record LowerTrussBackupResult(bool Succeeded, string Message, string BackupPath);
+
+internal sealed record LinkedLowerChordPartResult(bool Enabled, bool PartFound, string PartPath)
+{
+    public static LinkedLowerChordPartResult Disabled { get; } = new(false, false, string.Empty);
+}
+
+internal sealed record LinkedLowerChordPartPlan(
+    bool Enabled,
+    bool PartFound,
+    string PartPath,
+    IReadOnlyList<SolidWorksDimensionUpdateRequest> Requests)
+{
+    public static LinkedLowerChordPartPlan Disabled { get; } =
+        new(false, false, string.Empty, Array.Empty<SolidWorksDimensionUpdateRequest>());
+}
+
+internal sealed record LinkedLowerChordPartExecutionResult(
+    bool Enabled,
+    bool PartFound,
+    bool UpdateSucceeded,
+    string PartPath,
+    int RequestsCreatedCount)
+{
+    public static LinkedLowerChordPartExecutionResult Disabled { get; } = new(false, false, false, string.Empty, 0);
+}
+
+internal sealed record LowerSectionLinkedCompensationPlan(
+    bool Enabled,
+    bool PartFound,
+    bool Applied,
+    string PartPath,
+    string ResultMessage,
+    IReadOnlyList<SolidWorksDimensionUpdateRequest> Requests)
+{
+    public static LowerSectionLinkedCompensationPlan Disabled { get; } =
+        new(false, false, false, string.Empty, string.Empty, Array.Empty<SolidWorksDimensionUpdateRequest>());
+}
+
+internal sealed record LinkedLowerTrussSectionPartPlan(
+    bool Enabled,
+    bool PartFound,
+    string PartPath,
+    IReadOnlyList<SolidWorksDimensionUpdateRequest> Requests)
+{
+    public static LinkedLowerTrussSectionPartPlan Disabled { get; } =
+        new(false, false, string.Empty, Array.Empty<SolidWorksDimensionUpdateRequest>());
 }
 
