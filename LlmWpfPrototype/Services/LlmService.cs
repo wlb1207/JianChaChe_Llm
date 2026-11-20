@@ -22,7 +22,7 @@ namespace LlmWpfPrototype.Services;
 
 
 
-public sealed partial class LlmService : ILlmService
+public sealed class LlmService : ILlmService
 
 {
 
@@ -68,7 +68,7 @@ public sealed partial class LlmService : ILlmService
 
     private const string OpenAiCompatibleProvider = "OpenAICompatible";
 
-    private const string StreamingOnlyModel = "gpt-6.1-sol";
+    private const string StreamingOnlyModel = "gpt-5.4";
 
     private const string ChatCompletionsPath = "/v1/chat/completions";
 
@@ -848,7 +848,7 @@ Requirements:
 
                     {
 
-                        throw new InvalidOperationException("gpt-6.1-sol streaming response produced empty assistant content.");
+                        throw new InvalidOperationException("gpt-5.4 streaming response produced empty assistant content.");
 
                     }
 

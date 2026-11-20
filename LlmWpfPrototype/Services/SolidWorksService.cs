@@ -13,7 +13,7 @@ using LlmWpfPrototype.Models;
 
 namespace LlmWpfPrototype.Services;
 
-public sealed partial class SolidWorksService : ISolidWorksService
+public sealed class SolidWorksService : ISolidWorksService
 {
     private const string ProgId = "SldWorks.Application";
     private const string InitialInspectionCarAssemblyPath =
@@ -68,15 +68,10 @@ public sealed partial class SolidWorksService : ISolidWorksService
     }
 
     public bool IsSolidWorksRunning()
-        => ReadCadStatus(IsSolidWorksRunningCore, () => Volatile.Read(ref _lastCadRunning));
-
-    private bool _lastCadRunning;
-
-    private bool IsSolidWorksRunningCore()
     {
         try
         {
-            return _lastCadRunning = TryGetRunningApplication(out var application) && application is not null;
+            return TryGetOrCreateApplication(allowCreate: false, logWriter: null, out var application) && application is not null;
         }
         catch
         {
@@ -97,17 +92,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
     }
 
     public bool TryGetActiveDocumentInfoWithoutStartingSolidWorks(out string activeDocumentPath)
-    {
-        activeDocumentPath = ReadCadStatus(() =>
-        {
-            TryReadActiveDocumentPath(out var path);
-            Volatile.Write(ref _lastActiveCadPath, path);
-            return path;
-        }, () => Volatile.Read(ref _lastActiveCadPath));
-        return !string.IsNullOrWhiteSpace(activeDocumentPath);
-    }
-
-    private bool TryReadActiveDocumentPath(out string activeDocumentPath)
     {
         activeDocumentPath = string.Empty;
 
@@ -150,8 +134,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
 
     public Task<bool> EnsureSolidWorksAsync(Action<string>? logWriter = null, CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return RunCadCommandAsync(() => EnsureSolidWorksAsync(logWriter, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         try
@@ -182,9 +164,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
 
     public async Task<bool> OpenAssemblyAsync(string assemblyPath, Action<string>? logWriter = null, CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return await RunCadCommandAsync(() => OpenAssemblyAsync(assemblyPath, logWriter, cancellationToken), cancellationToken);
-        _assemblyComponentIndex = null;
         cancellationToken.ThrowIfCancellationRequested();
 
         try
@@ -204,29 +183,13 @@ public sealed partial class SolidWorksService : ISolidWorksService
 
             await WaitForSolidWorksStartupAsync(logWriter, cancellationToken);
 
-            var isWorkingAssembly = !string.IsNullOrWhiteSpace(_workingModelFolder) &&
-                WorkspaceSafetyPolicy.Within(assemblyPath, _workingModelFolder);
-            if (isWorkingAssembly)
-            {
-                var app = _swApp ?? throw new InvalidOperationException("SolidWorks 连接已断开。");
-                var openAssemblies = GetOpenDocuments(app).Select(doc => NormalizeFilePath(doc.GetPathName()))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                CadReferenceBoundary.RebindWorkingAssembly(assemblyPath, _workingModelFolder, _initialModelFolder,
-                    owner => app.GetDocumentDependencies2(owner, false, false, false),
-                    (owner, oldPath, newPath) => app.ReplaceReferencedDocument(owner, oldPath, newPath),
-                    openAssemblies.Contains, message => WriteLog(logWriter, message));
-            }
-
             if (TryActivateOpenedDocument(assemblyPath, logWriter))
             {
                 WriteLog(logWriter, "目标装配体已经打开，已切换到对应文档。");
                 return true;
             }
 
-            var openOptions = swOpenDocOptions_e.swOpenDocOptions_Silent;
-            if (isWorkingAssembly)
-                openOptions |= swOpenDocOptions_e.swOpenDocOptions_OverrideDefaultLoadLightweight;
-            if (TryOpenDocumentByCom(assemblyPath, (int)swDocumentTypes_e.swDocASSEMBLY, logWriter, (int)openOptions) &&
+            if (TryOpenDocumentByCom(assemblyPath, (int)swDocumentTypes_e.swDocASSEMBLY, logWriter) &&
                 TryActivateOpenedDocument(assemblyPath, logWriter))
             {
                 WriteLog(logWriter, $"已通过 COM 打开装配体：{assemblyPath}");
@@ -259,9 +222,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
         Action<string>? logWriter = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return RunCadCommandAsync(() => CloseDocumentsUnderFolderAsync(folderPath, logWriter, cancellationToken), cancellationToken);
-        _assemblyComponentIndex = null;
         cancellationToken.ThrowIfCancellationRequested();
 
         try
@@ -334,8 +294,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
         Action<string>? logWriter = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return await RunCadCommandAsync(() => UpdateDimensionsAsync(updates, logWriter, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (updates.Count == 0)
@@ -343,9 +301,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
             WriteLog(logWriter, "没有可执行的 SolidWorks 尺寸更新请求。");
             return false;
         }
-
-        if (updates.Any(update => update.ParameterName.StartsWith("upper_chord.", StringComparison.OrdinalIgnoreCase)))
-            return TryUpdateAssemblyComponents(updates, logWriter, cancellationToken);
 
         if (!await EnsureSolidWorksAsync(logWriter, cancellationToken))
         {
@@ -362,8 +317,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
         Action<string>? logWriter = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return await RunCadCommandAsync(() => ProbeDimensionAsync(partFilePath, dimensionName, logWriter, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new SolidWorksDimensionProbeResult
@@ -412,11 +365,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
         result.FeatureName = reference.FeatureName;
         result.SketchName = reference.SketchName;
         result.CurrentValue = reference.CurrentValue;
-        if (GetOpenedDocumentByPath(partFilePath) is { } probedDocument)
-        {
-            result.PartFilePath = probedDocument.GetPathName();
-            result.Configuration = TryGetActiveConfigurationName(probedDocument);
-        }
         result.Message = "已找到对应尺寸。";
         return result;
         }
@@ -440,8 +388,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
         Action<string>? logWriter = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return await RunCadCommandAsync(() => ListPartDimensionsAsync(partFilePath, logWriter, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (!ValidateExistingFile(partFilePath, logWriter, "零件"))
@@ -484,8 +430,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
 
     public async Task<bool> RebuildAssemblyAsync(string assemblyPath, Action<string>? logWriter = null, CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return await RunCadCommandAsync(() => RebuildAssemblyAsync(assemblyPath, logWriter, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         try
@@ -522,8 +466,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
         Action<string>? logWriter = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsCadThread)
-            return await RunCadCommandAsync(() => ScanDimensionsAsync(assemblyPath, logWriter, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new SolidWorksDimensionScanResult();
@@ -680,6 +622,7 @@ public sealed partial class SolidWorksService : ISolidWorksService
                 if (!TryPrepareDimensionUpdate(update, logWriter, out var preparedUpdate))
                 {
                     WriteLog(logWriter, $"Transaction cancelled during validation. Parameter={update.ParameterName}");
+                    RestorePreparedUpdates(preparedUpdates, logWriter);
                     return false;
                 }
 
@@ -981,12 +924,6 @@ public sealed partial class SolidWorksService : ISolidWorksService
             if (string.IsNullOrWhiteSpace(modifiedPart.Title))
             {
                 WriteLog(logWriter, $"CloseModifiedPartResult=Skipped(NoTitle); Path={modifiedPart.Path}");
-                continue;
-            }
-
-            if (!modifiedPart.WasOpenedByThisFlow)
-            {
-                WriteLog(logWriter, $"CloseModifiedPartResult=Skipped(ReferencedDocument); Title={modifiedPart.Title}; Path={modifiedPart.Path}");
                 continue;
             }
 
