@@ -14,7 +14,7 @@ using LlmWpfPrototype.Services;
 
 namespace LlmWpfPrototype.ViewModels;
 
-public sealed class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject
 {
     private enum AssistantWorkflowStage
     {

@@ -48,5 +48,7 @@ public interface ILlmService
         LlmChatRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default);
 
+    Task<string> AnswerFromLocalKnowledgeAsync(string evidencePrompt, CancellationToken cancellationToken = default);
+
     Task<LlmConnectionTestResult> TestConnectionAsync(string userInput, CancellationToken cancellationToken = default);
 }
