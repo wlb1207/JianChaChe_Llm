@@ -8,6 +8,12 @@ public sealed class SolidWorksDimensionProbeResult
 
     public string ResolvedDimensionName { get; set; } = string.Empty;
 
+    public string Configuration { get; set; } = string.Empty;
+
+    public string ReferencedConfiguration { get; set; } = string.Empty;
+
+    public string ComponentInstances { get; set; } = string.Empty;
+
     public string FeatureName { get; set; } = string.Empty;
 
     public string SketchName { get; set; } = string.Empty;

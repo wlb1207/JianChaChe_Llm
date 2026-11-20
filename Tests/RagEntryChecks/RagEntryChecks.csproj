@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <Target Name="RequireApplicationOutput" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(AppOutput)' == '' or !Exists('$(AppOutput)\LlmWpfPrototype.dll')"
+           Text="Set AppOutput to the absolute application build directory." />
+  </Target>
+  <ItemGroup>
+    <Reference Include="LlmWpfPrototype" HintPath="$(AppOutput)\LlmWpfPrototype.dll" />
+    <Content Include="$(AppOutput)\Config\*.json" CopyToOutputDirectory="Always" Link="Config\%(Filename)%(Extension)" />
+    <Content Include="$(AppOutput)\DisclosurePolicy\*.json" CopyToOutputDirectory="Always" Link="DisclosurePolicy\%(Filename)%(Extension)" />
+    <Content Include="$(AppOutput)\KnowledgeBase\**\*" CopyToOutputDirectory="Always" Link="KnowledgeBase\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Content Include="$(AppOutput)\Data\*.json" CopyToOutputDirectory="Always" Link="Data\%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

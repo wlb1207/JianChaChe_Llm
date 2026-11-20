@@ -1,15 +1,16 @@
 using LlmWpfPrototype.Services;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services.Rag;
+using System.Text.RegularExpressions;
 
 namespace LlmWpfPrototype.ViewModels;
 
 public sealed partial class MainViewModel
 {
     private bool _isLocalKnowledgeBusy;
+    private readonly List<ConversationMessage> _knowledgeConversationHistory = [];
     private CancellationTokenSource? _chatCancellation;
     private string _chatStatus = "工程问题自动结合相关资料；云端生成会发送问题及本轮选中的资料片段。";
-    private string _lastChatInput = string.Empty;
     private string? _chatRetrievalTopic;
     private AsyncRelayCommand? _cancelChatCommand;
     private AsyncRelayCommand? _confirmBusinessCommand;
@@ -35,50 +36,38 @@ public sealed partial class MainViewModel
             System.Text.RegularExpressions.Regex.IsMatch(text, @"(当前|现在).*(截面|壁厚|尺寸|参数).*(多少|多大|当前值)");
     }
 
-    private bool IsExplicitBusinessInput(string input)
+    private bool ShouldUseKnowledgeChat(string input, string normalized, UserIntentKind intent,
+        ReplyOnlyIntentContext? replyOnly, bool hasExplicitModificationCommand)
     {
-        if (IsLiveParameterQuery(input)) return true;
-        var normalized = NormalizeIntentText(input);
-        if (IsNegativeOrCancelModificationText(input) || IsModelStatusQuestion(input)
-            || IsModificationStatusQueryText(input)
-            || System.Text.RegularExpressions.Regex.IsMatch(normalized, @"如何|怎样|怎么|为什么|教我")
-            || IsQuestionOnlyInput(input)
-            || normalized.Contains("建议") || normalized.Contains("解释") || normalized.Contains("假如")
-            || normalized.Contains("例如") || normalized.Contains("是否")) return false;
-        if ((_pendingModificationContext is not null || _pendingResetWorkspaceConfirmation)
-            && (normalized is "确认" or "取消" or "是" or "否" || ContainsExecutableValue(input)
-                || (_pendingModificationContext?.MissingSlot == "member"
-                    && TryResolvePendingTargetMember(normalized, out _, out _)))) return true;
-        if (normalized is "查询可编辑参数" or "查看可编辑参数") return true;
-        if (!HasExplicitModificationCommand(input, normalized)
-            && !System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^(请|帮我|麻烦|我要|我想)*(把|将|修改|调整|加厚|打开|加载|启动|开启|重置|恢复|复原|配置|执行|运行)")) return false;
-        var intent = ClassifyUserIntent(input);
-        return intent is UserIntentKind.OpenModelCommand or UserIntentKind.ClearModificationCommand
-            or UserIntentKind.AmbiguousModificationCommand
-            || HasExplicitModificationCommand(input, normalized)
-            || IsExplicitManualTrussMappingIntent(input)
-            || ((_pendingModificationContext is not null || _pendingResetWorkspaceConfirmation)
-                && (normalized is "确认" or "取消" or "是" or "否" || ContainsExecutableValue(input)
-                    || (_pendingModificationContext?.MissingSlot == "member"
-                        && TryResolvePendingTargetMember(normalized, out _, out _))))
-            || normalized is "查询可编辑参数" or "查看可编辑参数";
+        if (IsLiveParameterQuery(input) || IsExplicitManualTrussMappingIntent(input)
+            || replyOnly is not null && replyOnly.IntentLabel != "PureQuestion")
+            return false;
+
+        if (replyOnly is null)
+        {
+            if (intent != UserIntentKind.Unknown || hasExplicitModificationCommand || Regex.IsMatch(normalized,
+                @"^(?:请|帮我|麻烦|我要|我想|给我)*(?:把|将|打开|加载|启动|开启|关闭|修改|改|调整|加厚|保存|查询|读取|查看|扫描|配置|重置|恢复|还原|生成|导出|执行|运行|确认|取消)"))
+                return false;
+        }
+
+        return AutomaticKnowledgeChatService.Plan(input, _knowledgeConversationHistory, _chatRetrievalTopic).NeedsEvidence;
     }
 
-    private async Task SendAutomaticChatMessageAsync()
+    private async Task SendAutomaticChatMessageAsync(string question)
     {
         if (_isLocalKnowledgeBusy || _isGeneratingModel) return;
-        var question = UserInput.Trim();
         if (question.Length == 0 || question.Length > LocalKnowledgeChatService.MaxQuestionCharacters)
-        { ChatStatus = "请输入 1 至 2000 字符的问题；未发送请求。"; return; }
+        {
+            ChatStatus = "请输入 1 至 2000 字符的问题；未发送请求。";
+            AddAssistantMessage(ChatStatus);
+            return;
+        }
         using var cancellation = new CancellationTokenSource();
         _chatCancellation = cancellation;
         _isLocalKnowledgeBusy = true;
-        _lastChatInput = question;
         OnPropertyChanged(nameof(IsChatBusy));
         RefreshActionState();
-        var history = _conversationHistory.Select(x => new ConversationMessage { Role = x.Role, Content = x.Content, KnowledgeProvenance = x.KnowledgeProvenance }).ToList();
-        ChatMessages.Add(new ChatMessage { IsUser = true, RoleDisplay = "您", Text = question });
-        UserInput = string.Empty;
+        var history = _knowledgeConversationHistory.ToArray();
         ChatStatus = "正在理解问题、按需检索并请求模型回答；问答不会执行工程操作。";
         try
         {
@@ -91,12 +80,22 @@ public sealed partial class MainViewModel
                 RoleDisplay = "AI", Text = result.Answer, IsLocalKnowledgeReply = true,
                 LocalSources = result.Sources, LocalCitationStatus = result.CitationStatus
             });
-            _conversationHistory.Add(new ConversationMessage { Role = "user", Content = question, KnowledgeProvenance = result.UserProvenance });
-            _conversationHistory.Add(new ConversationMessage { Role = "assistant", Content = result.Answer, KnowledgeProvenance = result.AnswerProvenance });
-            while (_conversationHistory.Count > MaxConversationHistoryMessages) _conversationHistory.RemoveAt(0);
-            _llmRuntimeStatus = "在线";
-            ChatStatus = result.Sources.Count == 0 ? "回答完成；未提供规范资料作为依据。"
-                : "回答完成；可展开本次来源与完整原文核对，资料适用性未经确认。";
+            if (result.UserProvenance is not null && result.AnswerProvenance is not null)
+            {
+                _knowledgeConversationHistory.Add(new ConversationMessage { Role = "user", Content = question, KnowledgeProvenance = result.UserProvenance });
+                _knowledgeConversationHistory.Add(new ConversationMessage { Role = "assistant", Content = result.Answer, KnowledgeProvenance = result.AnswerProvenance });
+                while (_knowledgeConversationHistory.Count > MaxConversationHistoryMessages)
+                    _knowledgeConversationHistory.RemoveAt(0);
+            }
+            if (result.CitedIds.Count > 0 && result.InvalidIds.Count == 0)
+            {
+                _llmRuntimeStatus = "在线";
+                ChatStatus = "回答完成，可展开本轮引用的资料片段。";
+            }
+            else
+            {
+                ChatStatus = result.CitationStatus;
+            }
         }
         catch (KnowledgeDisclosureException ex)
         {
@@ -108,6 +107,12 @@ public sealed partial class MainViewModel
         {
             ChatStatus = "已取消等待；未自动重试。不能据此证明远端已停止处理或计费。";
             ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
+        }
+        catch (LocalKnowledgeCallException ex)
+        {
+            _llmRuntimeStatus = "异常";
+            ChatStatus = ex.Message;
+            AddAssistantMessage(ChatStatus);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("本地资料检索失败", StringComparison.Ordinal)
             || ex.Message.StartsWith("当前为离线 Mock", StringComparison.Ordinal)

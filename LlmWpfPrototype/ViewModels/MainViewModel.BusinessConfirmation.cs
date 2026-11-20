@@ -34,7 +34,7 @@ public sealed partial class MainViewModel
         DesignStatus = StatusPendingConfirmation;
         StatusMessage = "尺寸修改尚未执行，等待确认。";
         var summary = string.Join("；", Parameters.Select(p => $"{ResolveParameterDisplayName(p)} = {p.Value} {p.Unit}"));
-        var reply = $"待确认修改：{summary}。确认后按原流程校验、写入、重建、保存并回读核对；任一步失败均不报告成功。请点击“确认待执行业务”。";
+        var reply = $"待确认修改：{summary}。确认后将校验、写入、重建、保存并回读核对。请发送“确认修改”或“取消修改”。";
         AddAssistantMessage(reply);
         AppendConversationHistory(input, reply);
         AppendLog("[Confirmation] DimensionPlanQueued; Dispatched=False");

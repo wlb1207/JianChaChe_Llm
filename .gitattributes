@@ -3,6 +3,12 @@
 ###############################################################################
 * text=auto
 
+# The disclosure guard pins this file's exact SHA-256 bytes.
+LlmWpfPrototype/DisclosurePolicy/approved-sources.json -text whitespace=cr-at-eol
+LlmWpfPrototype/KnowledgeBase/GB_T_3811_2008/verified/01_main_girder_strength.md text eol=crlf
+LlmWpfPrototype/KnowledgeBase/GB_T_3811_2008/verified/07_allowable_stress.md text eol=crlf
+LlmWpfPrototype/KnowledgeBase/GB_T_3811_2008/verified/08_safety_factor.md text eol=crlf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

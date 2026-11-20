@@ -199,7 +199,7 @@ public sealed partial class MainViewModel : ObservableObject
         EditableTrussMemberMappings = new ObservableCollection<EditableTrussMemberMappingItemViewModel>();
 
         _primaryActionCommand = new AsyncRelayCommand(HandlePrimaryActionAsync, CanExecutePrimaryAction);
-        _clearConversationCommand = new AsyncRelayCommand(ClearConversationAsync);
+        _clearConversationCommand = new AsyncRelayCommand(ClearConversationAsync, () => !_isLocalKnowledgeBusy && !_isGeneratingModel);
         _reparseCommand = new AsyncRelayCommand(ReparseAsync, CanReparse);
         _toggleAdvancedDebugCommand = new AsyncRelayCommand(ToggleAdvancedDebugAsync);
         _generateApdlCommand = new AsyncRelayCommand(GenerateApdlAsync, CanGenerateApdl);
@@ -416,6 +416,11 @@ public sealed partial class MainViewModel : ObservableObject
                 return "生成中...";
             }
 
+            if (_pendingBusinessPlan is not null)
+            {
+                return string.IsNullOrWhiteSpace(UserInput) ? "确认修改" : "发送";
+            }
+
             if (DesignStatus != StatusPendingConfirmation)
             {
                 return "发送";
@@ -509,14 +514,14 @@ public sealed partial class MainViewModel : ObservableObject
 
     private bool CanExecutePrimaryAction()
     {
-        if (_isGeneratingModel)
+        if (_isGeneratingModel || _isLocalKnowledgeBusy)
         {
             return false;
         }
 
         if (DesignStatus == StatusPendingConfirmation)
         {
-            return Parameters.Any();
+            return Parameters.Any() || _pendingBusinessPlan is not null && !string.IsNullOrWhiteSpace(UserInput);
         }
 
         return !string.IsNullOrWhiteSpace(UserInput);
@@ -524,7 +529,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private bool CanReparse()
     {
-        return !_isGeneratingModel && ChatMessages.Count > 0;
+        return !_isGeneratingModel && !_isLocalKnowledgeBusy && _pendingBusinessPlan is null && ChatMessages.Count > 0;
     }
 
     private bool CanGenerateApdl()
@@ -589,6 +594,18 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (DesignStatus == StatusPendingConfirmation)
         {
+            if (_pendingBusinessPlan is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(UserInput))
+                {
+                    await SendUserMessageAsync();
+                    return;
+                }
+
+                await ExecuteConfirmedBusinessPlanAsync();
+                return;
+            }
+
             if (_lastExecutableActionSucceeded && _lastDispatchHandled && _lastDispatchSuppressDefaultReply)
             {
                 AppendLog("[Dispatch] HandlePrimaryActionAsync 检测到上一轮命令已真实执行成功，跳过旧 fallback。");
@@ -628,6 +645,35 @@ public sealed partial class MainViewModel : ObservableObject
         _lastSubmittedInput = input;
         UserInput = string.Empty;
 
+        if (IsBusinessConfirmationText(input))
+        {
+            if (_pendingBusinessPlan is not null)
+            {
+                AppendLog("[Confirmation] ChatConfirmationCommand=True");
+                await ExecuteConfirmedBusinessPlanAsync();
+            }
+            else
+            {
+                AddAssistantMessage("当前没有待确认的尺寸修改。请先提交需要修改的构件和目标尺寸。");
+            }
+            return;
+        }
+
+        if (_pendingBusinessPlan is not null)
+        {
+            ClearPendingBusinessPlan();
+            AppendLog("[Confirmation] DimensionPlanClearedByNewInput; Dispatched=False");
+            if (IsNegativeOrCancelModificationText(input))
+            {
+                const string cancellationReply = "已取消这项待确认的尺寸修改，未执行 CAD 写入。";
+                AddAssistantMessage(cancellationReply);
+                AppendConversationHistory(input, cancellationReply);
+                return;
+            }
+
+            AddAssistantMessage("上一项尺寸修改尚未确认，已撤销。需要执行时，请重新发送修改要求。");
+        }
+
         ReplyOnlyIntentContext? replyOnlyIntent = null;
         try
         {
@@ -636,7 +682,8 @@ public sealed partial class MainViewModel : ObservableObject
             _lastDispatchSucceeded = false;
             _lastExecutableActionSucceeded = false;
             var normalizedInput = NormalizeIntentText(input);
-            var hasExplicitModificationCommand = HasExplicitModificationCommand(input, normalizedInput);
+            var isQuestionOnlyInput = IsQuestionOnlyInput(input);
+            var hasExplicitModificationCommand = !isQuestionOnlyInput && HasExplicitModificationCommand(input, normalizedInput);
             AppendOpenModelIntentDiagnostics(input, normalizedInput);
 
             if (IsNegativeOrCancelModificationText(input))
@@ -784,7 +831,6 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var isQuestionOnlyInput = IsQuestionOnlyInput(input);
             AppendLog($"[IntentGuard] QuestionOnlyInput={isQuestionOnlyInput}");
             if (isQuestionOnlyInput)
             {
@@ -818,7 +864,8 @@ public sealed partial class MainViewModel : ObservableObject
             AppendLog($"[DeterministicRouteProbe] InputContainsLowerTrussKeyword={inputContainsLowerTrussKeyword}");
             AppendLog($"[DeterministicRouteProbe] InputContainsLowerChordKeyword={inputContainsLowerChordKeyword}");
             AppendLog("[DeterministicRouteProbe] TryLowerTrussBeforeLowerChord=True");
-            if (TryBuildDeterministicLowerTrussParseResult(input, out var lowerTrussParseResult))
+            if (replyOnlyIntent is null &&
+                TryBuildDeterministicLowerTrussParseResult(input, out var lowerTrussParseResult))
             {
                 if (TryGetMatchedLowerTrussKeyword(deterministicRouteNormalized, out var lowerTrussKeyword))
                 {
@@ -834,7 +881,8 @@ public sealed partial class MainViewModel : ObservableObject
 
             AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=False");
 
-            if (TryBuildDeterministicLowerChordParseResult(input, out var lowerChordParseResult))
+            if (replyOnlyIntent is null &&
+                TryBuildDeterministicLowerChordParseResult(input, out var lowerChordParseResult))
             {
                 AppendLog(IsDeterministicLowerTrussParse(lowerChordParseResult)
                     ? "[Intent] DeterministicLowerTrussParse=True"
@@ -843,10 +891,12 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            if (TryBuildDeterministicUpperChordParseResult(input, out var deterministicParseResult, out var deterministicReply))
+            var deterministicReply = string.Empty;
+            if (replyOnlyIntent is null &&
+                TryBuildDeterministicUpperChordParseResult(input, out var deterministicParseResult, out deterministicReply))
             {
                 AppendLog("[Intent] DeterministicUpperChordParse=True");
-                await HandleParsedResultAsync(deterministicParseResult, string.Empty, input);
+                await RouteLocallyParsedChordEditAsync(deterministicParseResult, input);
                 return;
             }
 
@@ -855,6 +905,14 @@ public sealed partial class MainViewModel : ObservableObject
                 AppendLog("[Intent] DeterministicUpperChordParse=ClarificationRequired");
                 AppendLog($"[AI Reply] {deterministicReply}");
                 AddAssistantMessage(deterministicReply);
+                return;
+            }
+
+            if (ShouldUseKnowledgeChat(input, normalizedInput, classifiedIntent, replyOnlyIntent,
+                    hasExplicitModificationCommand))
+            {
+                AppendLog("[Intent] EngineeringQuestionRoutedTo=RAG");
+                await SendAutomaticChatMessageAsync(input);
                 return;
             }
 
@@ -1305,6 +1363,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ClearConversationAsync()
     {
+        ClearPendingBusinessPlan();
         ChatMessages.Clear();
         Parameters.Clear();
         MissingItems.Clear();
@@ -1417,6 +1476,8 @@ public sealed partial class MainViewModel : ObservableObject
     private void ClearConversationHistory(string reason)
     {
         _conversationHistory.Clear();
+        _knowledgeConversationHistory.Clear();
+        _chatRetrievalTopic = null;
         AppendLog($"[ConversationHistory] Cleared Reason={reason}");
     }
 
@@ -1474,7 +1535,7 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     _lastSubmittedInput = synthesizedInput;
                     AppendLog("[PendingModification] Completed -> update_solidworks_dimensions");
-                    await HandleParsedResultAsync(completedParseResult, string.Empty, input);
+                    await RouteLocallyParsedChordEditAsync(completedParseResult, input);
                     return true;
                 }
             }
@@ -1491,7 +1552,7 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     _lastSubmittedInput = synthesizedInput;
                     AppendLog("[PendingModification] Completed -> update_solidworks_dimensions");
-                    await HandleParsedResultAsync(completedParseResult, string.Empty, input);
+                    await RouteLocallyParsedChordEditAsync(completedParseResult, input);
                     return true;
                 }
             }
@@ -2230,10 +2291,40 @@ public sealed partial class MainViewModel : ObservableObject
                normalized.Contains("没让你改", StringComparison.Ordinal) ||
                normalized.Contains("不要修改", StringComparison.Ordinal) ||
                normalized.Contains("别修改", StringComparison.Ordinal) ||
+               normalized.Contains("不要把", StringComparison.Ordinal) ||
+               normalized.Contains("别把", StringComparison.Ordinal) ||
+               normalized.Contains("不要改", StringComparison.Ordinal) ||
                normalized.Contains("不改了", StringComparison.Ordinal) ||
                normalized.Equals("取消", StringComparison.Ordinal) ||
+               normalized.Equals("取消修改", StringComparison.Ordinal) ||
                normalized.Contains("算了", StringComparison.Ordinal) ||
                normalized.Contains("停止", StringComparison.Ordinal);
+    }
+
+    private static bool IsBusinessConfirmationText(string text)
+    {
+        var normalized = NormalizeIntentText(text).TrimEnd('。', '！', '.', '!');
+        return normalized is "确认修改" or "确认本次修改";
+    }
+
+    private Task RouteLocallyParsedChordEditAsync(LlmParseResult plan, string input)
+    {
+        if (!plan.Parameters.Any(parameter => parameter.Name.StartsWith("truss_top_chord_", StringComparison.Ordinal)))
+        {
+            return HandleParsedResultAsync(plan, string.Empty, input);
+        }
+
+        if (TryBuildDeterministicValidationReply(plan, out var validationReply))
+        {
+            AddAssistantMessage(validationReply);
+            AppendConversationHistory(input, validationReply);
+            return Task.CompletedTask;
+        }
+
+        plan.NeedConfirmation = true;
+        BindParameters(plan);
+        QueueBusinessPlanForConfirmation(plan, input);
+        return Task.CompletedTask;
     }
 
     private static bool IsModificationStatusQueryText(string text)
@@ -3912,6 +4003,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(PrimaryActionText));
         _primaryActionCommand.RaiseCanExecuteChanged();
+        _clearConversationCommand.RaiseCanExecuteChanged();
         _reparseCommand.RaiseCanExecuteChanged();
         _generateApdlCommand.RaiseCanExecuteChanged();
         _openApdlOutputFileCommand.RaiseCanExecuteChanged();

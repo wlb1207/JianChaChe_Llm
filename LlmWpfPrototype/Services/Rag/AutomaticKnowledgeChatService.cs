@@ -78,7 +78,7 @@ public sealed class AutomaticKnowledgeChatService
                 throw new InvalidOperationException("选中资料含本机路径或疑似凭据；已停止，未发送。");
         }
         var status = !plan.NeedsEvidence ? "not_requested: 普通闲聊，无需工程资料"
-            : selected.Sources.Count == 0 ? "not_found: 当前本地资料未找到相关内容；只能作一般性说明，不能肯定项目规范数值或合规结论"
+            : selected.Sources.Count == 0 ? "not_found: 当前本地资料未找到可引用的相关依据"
             : "available: 仅本轮选中片段；适用性及版本优先级未确认；存在冲突须指出并追问";
         using var evidence = JsonDocument.Parse(selected.Prompt);
         var prompt = JsonSerializer.Serialize(new {
@@ -97,11 +97,27 @@ public sealed class AutomaticKnowledgeChatService
     {
         var prepared = await PrepareAsync(question, history, cancellationToken, previousTopic);
         cancellationToken.ThrowIfCancellationRequested();
-        // Even with zero evidence, only the configured model produces the final answer.
+        if (prepared.Plan.NeedsEvidence && prepared.Request.Sources.Count == 0)
+        {
+            KnowledgeDisclosureGuard.Validate(prepared.Request.Prompt);
+            const string insufficiencyAnswer = "现有资料不足，暂不能回答这个工程问题。请补充适用规范、条款或相关资料。";
+            return new LocalKnowledgeChatResult(insufficiencyAnswer,
+                "未找到可引用的本地依据，本轮未调用模型。", [], [], [])
+            {
+                UserProvenance = KnowledgeDisclosureGuard.HistoryFor(prepared.Request.Prompt, question),
+                AnswerProvenance = KnowledgeDisclosureGuard.HistoryFor(prepared.Request.Prompt, insufficiencyAnswer)
+            };
+        }
+
         KnowledgeDisclosureGuard.Validate(prepared.Request.Prompt);
         var answer = await _model.AnswerFromLocalKnowledgeAsync(prepared.Request.Prompt, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var mapped = LocalKnowledgeChatService.CompleteAnswer(prepared.Request, answer);
+        if (prepared.Plan.NeedsEvidence && (mapped.CitedIds.Count == 0 || mapped.InvalidIds.Count > 0))
+            return mapped with
+            {
+                Answer = "本轮模型回答未提供可核对的引用，暂不展示工程结论。可展开下方资料核对原文。"
+            };
         if (mapped.Sources.Count == 0 && mapped.InvalidIds.Count == 0)
             mapped = mapped with { CitationStatus = prepared.Plan.NeedsEvidence
                 ? "本轮未提供可引用资料；一般性解释不等于已核验的项目规范结论。" : "" };

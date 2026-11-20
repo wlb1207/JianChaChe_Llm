@@ -31,6 +31,12 @@ public interface ISolidWorksService
         Action<string>? logWriter = null,
         CancellationToken cancellationToken = default);
 
+    Task<SolidWorksDimensionProbeResult> ReadOpenDimensionAsync(
+        string partFilePath,
+        string dimensionName,
+        Action<string>? logWriter = null,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<SolidWorksDimensionScanItem>> ListPartDimensionsAsync(
         string partFilePath,
         Action<string>? logWriter = null,
