@@ -14,7 +14,7 @@ using LlmWpfPrototype.Services;
 
 namespace LlmWpfPrototype.ViewModels;
 
-public sealed class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject
 {
     private enum AssistantWorkflowStage
     {
@@ -4760,7 +4760,8 @@ public sealed class MainViewModel : ObservableObject
     {
         if (!CheckAccessToUiThread())
         {
-            ExecuteOnUiThread(() => AppendLog(message, exception, source));
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                DispatcherPriority.Normal, new Action(() => AppendLog(message, exception, source)));
             return;
         }
 
@@ -4781,8 +4782,28 @@ public sealed class MainViewModel : ObservableObject
         EnsureLogCategoryExists(entry.Category);
         EnsureLogActionExists(entry.Action);
         AppendLogToFile(entry);
-        UpdateFilteredLogs();
-        RefreshActionState();
+        ScheduleFilteredLogRefresh();
+    }
+
+    private bool _filteredLogRefreshPending;
+
+    private void ScheduleFilteredLogRefresh()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null)
+        {
+            UpdateFilteredLogs();
+            RefreshActionState();
+            return;
+        }
+        if (_filteredLogRefreshPending) return;
+        _filteredLogRefreshPending = true;
+        dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            _filteredLogRefreshPending = false;
+            UpdateFilteredLogs();
+            RefreshActionState();
+        }));
     }
 
     private string SanitizeLogText(string? text)

@@ -59,7 +59,21 @@ public sealed class CommandDispatcher
         _trussParameterSetupStateService = trussParameterSetupStateService;
     }
 
-    public async Task<CommandDispatchResult> ExecuteAsync(
+    public Task<CommandDispatchResult> ExecuteAsync(
+        LlmParseResult? parseResult,
+        IReadOnlyList<ParameterItem> parameters,
+        string rawUserInput,
+        Action<string> logWriter,
+        CancellationToken cancellationToken = default)
+    {
+        return _solidWorksService is SolidWorksService cad
+            ? cad.RunCadCommandAsync(
+                () => ExecuteCoreAsync(parseResult, parameters, rawUserInput, logWriter, cancellationToken),
+                cancellationToken)
+            : ExecuteCoreAsync(parseResult, parameters, rawUserInput, logWriter, cancellationToken);
+    }
+
+    private async Task<CommandDispatchResult> ExecuteCoreAsync(
         LlmParseResult? parseResult,
         IReadOnlyList<ParameterItem> parameters,
         string rawUserInput,
@@ -679,7 +693,6 @@ public sealed class CommandDispatcher
             return;
         }
 
-        var rule = TrussLinkedParameterRules.UpperChordRedTubeLengthCompensation;
         var newUpperChordSectionMm = parseResult.Width!.Value;
         var linkedMember = members.FirstOrDefault(IsUpperChordMember) ?? members[0];
         await AppendLinkedUpperChordRedTubeCompensationRequestsCoreAsync(
@@ -707,7 +720,7 @@ public sealed class CommandDispatcher
         {
             logWriter("[LinkedRule] UpperChordSectionChanged=True");
             logWriter("[LinkedRule] Error=UpperChordMemberNotConfigured");
-            return;
+            throw new InvalidOperationException("上弦杆联动配置缺失，未写入尺寸。");
         }
 
         logWriter("[LinkedRule] UpperChordSectionChanged=True");
@@ -736,66 +749,63 @@ public sealed class CommandDispatcher
 
         if (targetLengthMm <= 0)
         {
-            logWriter("[LinkedRule] AppendRequest=False");
-            logWriter("[LinkedRule] RedTubeExtrudeLengthUpdated=False");
-            logWriter("[LinkedRule] Error=InvalidTargetLength");
-            return;
+            throw new InvalidOperationException("上弦杆红管的联动长度无效，未写入尺寸。");
         }
 
-        var candidateParts = ResolveLinkedRulePartPaths(rule, logWriter);
-        logWriter($"[LinkedRule] TargetPartMatched={candidateParts.Count > 0}");
-        if (candidateParts.Count == 0)
+        var candidateParts = rule.TargetPartFileNames
+            .Select(relativePath => Path.GetFullPath(Path.Combine(_workspaceManager.WorkingModelFolder, relativePath)))
+            .ToArray();
+        foreach (var path in candidateParts)
         {
-            logWriter("[LinkedRule] AppendRequest=False");
-            logWriter("[LinkedRule] RedTubeExtrudeLengthUpdated=False");
-            logWriter("[LinkedRule] Error=TargetPartNotFound");
-            return;
+            if (!IsUnderWorkingModelFolder(path) || !File.Exists(path))
+            {
+                throw new InvalidOperationException($"找不到工作装配所需的联动红管 {Path.GetFileName(path)}，未写入尺寸。");
+            }
+            WorkspaceSafetyPolicy.RejectLinks(path);
         }
-
-        var appendedCount = 0;
-        var matchedDimensionNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
+        logWriter($"[LinkedRule] TargetPartMatched=True; Count={candidateParts.Length}");
+        var linkedRequests = new List<SolidWorksDimensionUpdateRequest>();
         foreach (var partFilePath in candidateParts)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            var filteredCandidates = BuildPartSpecificDimensionNameCandidates(
-                partFilePath,
-                rule.DimensionNameCandidates);
-            var resolvedDimensionName = await ResolveLinkedRuleDimensionNameAsync(
-                partFilePath,
-                filteredCandidates,
-                logWriter,
-                cancellationToken);
-
-            if (string.IsNullOrWhiteSpace(resolvedDimensionName))
+            var matchingDimensions = new List<SolidWorksDimensionProbeResult>();
+            foreach (var candidate in rule.DimensionNameCandidates)
             {
-                logWriter("[LinkedRule] TargetDimensionMatched=False");
-                continue;
+                var fullName = $"{candidate}@{Path.GetFileNameWithoutExtension(partFilePath)}.Part";
+                var probe = await _solidWorksService.ReadOpenDimensionAsync(partFilePath, fullName, logWriter, cancellationToken);
+                if (!probe.Found) continue;
+                if (!string.Equals(NormalizeScanPartFilePath(probe.PartFilePath), partFilePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"联动红管 {Path.GetFileName(partFilePath)} 的文档路径不一致，未写入尺寸。");
+                }
+                if (string.Equals(probe.ResolvedDimensionName, fullName, StringComparison.OrdinalIgnoreCase))
+                {
+                    matchingDimensions.Add(probe);
+                }
             }
 
-            matchedDimensionNames.Add(resolvedDimensionName);
-            requests.Add(new SolidWorksDimensionUpdateRequest
+            var match = matchingDimensions.Count == 1 ? matchingDimensions[0] : null;
+            if (match is null || string.IsNullOrWhiteSpace(match.Configuration) || match.Configuration.StartsWith('<'))
+            {
+                throw new InvalidOperationException($"无法唯一确认联动红管 {Path.GetFileName(partFilePath)} 的拉伸尺寸及配置，未写入尺寸。");
+            }
+            linkedRequests.Add(new SolidWorksDimensionUpdateRequest
             {
                 ParameterName = TrussLinkedParameterRules.LinkedRedTubeLengthParameterName,
                 DisplayName = $"{linkedMember.Name}联动红色短管拉伸长度",
                 PartFilePath = partFilePath,
-                Configuration = string.Empty,
-                DimensionName = resolvedDimensionName,
+                Configuration = match.Configuration,
+                DimensionName = match.ResolvedDimensionName,
                 Value = targetLengthMm.ToString(CultureInfo.InvariantCulture),
                 Unit = "mm"
             });
-            appendedCount++;
-            logWriter("[LinkedRule] AppendRequest=True");
         }
 
-        logWriter($"[LinkedRule] TargetDimensionMatched={matchedDimensionNames.Count > 0}");
-        logWriter($"[LinkedRule] RedTubeExtrudeLengthUpdated={appendedCount > 0}");
-        if (appendedCount == 0)
+        foreach (var request in linkedRequests)
         {
-            logWriter("[LinkedRule] AppendRequest=False");
-            logWriter("[LinkedRule] Error=TargetDimensionNotFound");
+            requests.Add(request);
         }
+        logWriter($"[LinkedRule] TargetDimensionMatched=True; RequestsCreated={linkedRequests.Count}");
     }
     private async Task<List<SolidWorksDimensionUpdateRequest>> BuildTrussMemberDimensionUpdateRequestsWithPartMappingsAsync(
         IReadOnlyList<EditableTrussMemberItem> members,
@@ -807,6 +817,12 @@ public sealed class CommandDispatcher
 
         foreach (var member in members)
         {
+            if (IsUpperChordMember(member) && member.PartMappings.Count > 0 &&
+                member.PartMappings.Any(mapping => !IsUsablePartMapping(mapping, parseResult)))
+            {
+                throw new InvalidOperationException("上弦杆的尺寸映射不完整，未写入尺寸。");
+            }
+
             var hasUsablePartMappings = member.PartMappings.Any(mapping => IsUsablePartMapping(mapping, parseResult));
             if (!hasUsablePartMappings && HasLegacyTrussMemberMapping(member))
             {
@@ -880,6 +896,10 @@ public sealed class CommandDispatcher
     {
         if (string.IsNullOrWhiteSpace(partFilePath))
         {
+            if (IsUpperChordMember(member))
+            {
+                throw new InvalidOperationException("无法定位上弦杆工作零件，未写入尺寸。");
+            }
             logWriter($"[TrussMapping] 构件 {member.Name} 的 {mappingSource} 零件路径为空，跳过。");
             return;
         }
@@ -892,6 +912,33 @@ public sealed class CommandDispatcher
             innerWidthDimensionName,
             innerHeightDimensionName,
             logWriter);
+
+        if (IsUpperChordMember(member) && !IsUnderWorkingModelFolder(partFilePath))
+        {
+            throw new InvalidOperationException("已中止：检测到目标文件不在工作区目录。");
+        }
+
+        SolidWorksDimensionProbeResult? widthProbe = null;
+        SolidWorksDimensionProbeResult? heightProbe = null;
+        if (IsUpperChordMember(member))
+        {
+            if (parseResult.Width.HasValue)
+            {
+                if (string.IsNullOrWhiteSpace(widthDimensionName))
+                    throw new InvalidOperationException($"零件 {Path.GetFileName(partFilePath)} 缺少外宽尺寸映射，未写入尺寸。");
+                widthProbe = await ProbeTrussDimensionAsync(member, partFilePath, widthDimensionName, logWriter, cancellationToken);
+            }
+            if (parseResult.Height.HasValue)
+            {
+                if (string.IsNullOrWhiteSpace(heightDimensionName))
+                    throw new InvalidOperationException($"零件 {Path.GetFileName(partFilePath)} 缺少外高尺寸映射，未写入尺寸。");
+                heightProbe = await ProbeTrussDimensionAsync(member, partFilePath, heightDimensionName, logWriter, cancellationToken);
+            }
+            var configurations = new[] { widthProbe?.Configuration, heightProbe?.Configuration }
+                .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal).ToList();
+            if (configurations.Count > 1)
+                throw new InvalidOperationException($"零件 {Path.GetFileName(partFilePath)} 的截面尺寸映射指向不同配置，未写入尺寸。");
+        }
 
         if (parseResult.Width.HasValue)
         {
@@ -907,9 +954,10 @@ public sealed class CommandDispatcher
                     widthDimensionName,
                     "截面宽度",
                     parseResult.Width.Value,
-                    parseResult.Unit);
+                    parseResult.Unit,
+                    widthProbe?.Configuration);
                 requests.Add(request);
-                logWriter($"[TrussMapping] 鐢熸垚璇锋眰锛歅artFilePath={request.PartFilePath}, DimensionName={request.DimensionName}");
+                logWriter($"[TrussMapping] Created request. PartFilePath={request.PartFilePath}, DimensionName={request.DimensionName}");
             }
         }
 
@@ -925,19 +973,28 @@ public sealed class CommandDispatcher
                     member,
                     partFilePath,
                     heightDimensionName,
-                    "閹搭亪娼版妯哄",
+                    "截面高度",
                     parseResult.Height.Value,
-                    parseResult.Unit);
+                    parseResult.Unit,
+                    heightProbe?.Configuration);
                 requests.Add(request);
-                logWriter($"[TrussMapping] 鐢熸垚璇锋眰锛歅artFilePath={request.PartFilePath}, DimensionName={request.DimensionName}");
+                logWriter($"[TrussMapping] Created request. PartFilePath={request.PartFilePath}, DimensionName={request.DimensionName}");
             }
         }
 
-        if (parseResult.Thickness.HasValue)
+        var preserveCutProfile = !parseResult.Thickness.HasValue &&
+                                 (parseResult.Width.HasValue || parseResult.Height.HasValue) &&
+                                 string.IsNullOrWhiteSpace(thicknessDimensionName) &&
+                                 partMapping is not null &&
+                                 string.Equals(partMapping.InnerWidthValueMode, ValueModeOuterMinusTwoThickness, StringComparison.OrdinalIgnoreCase) &&
+                                 string.Equals(partMapping.InnerHeightValueMode, ValueModeOuterMinusTwoThickness, StringComparison.OrdinalIgnoreCase);
+        if (parseResult.Thickness.HasValue || preserveCutProfile)
         {
-            if (!string.IsNullOrWhiteSpace(thicknessDimensionName))
+            if (preserveCutProfile) WorkspaceSafetyPolicy.RejectLinks(partFilePath);
+            if (parseResult.Thickness is decimal requestedThickness && !string.IsNullOrWhiteSpace(thicknessDimensionName))
             {
-                var thicknessProbe = await _solidWorksService.ProbeDimensionAsync(
+                var thicknessProbe = await ProbeTrussDimensionAsync(
+                    member,
                     partFilePath,
                     thicknessDimensionName,
                     logWriter,
@@ -957,8 +1014,9 @@ public sealed class CommandDispatcher
                         partFilePath,
                         thicknessDimensionName,
                         "澹佸帤",
-                        parseResult.Thickness.Value,
-                        parseResult.Unit);
+                        requestedThickness,
+                        parseResult.Unit,
+                        thicknessProbe.Configuration);
                     requests.Add(directThicknessRequest);
                     logWriter($"[TrussMapping] Created request. PartFilePath={directThicknessRequest.PartFilePath}, DimensionName={directThicknessRequest.DimensionName}");
                     return;
@@ -966,7 +1024,7 @@ public sealed class CommandDispatcher
 
                 logWriter($"[TrussMapping] Requested wall thickness dimension not found. PartFilePath={partFilePath}, RequestedDimension={thicknessDimensionName}");
             }
-            else
+            else if (!preserveCutProfile)
             {
                 logWriter($"[TrussMapping] Missing ThicknessDimensionName. Member={member.Id}, Mapping={mappingSource}. Trying inner cut fallback.");
             }
@@ -991,8 +1049,7 @@ public sealed class CommandDispatcher
                 return;
             }
 
-            throw new InvalidOperationException(
-                $"Unable to resolve wall thickness mapping for {member.Id}. Part={partFilePath}, RequestedDimension={thicknessDimensionName}");
+            throw new InvalidOperationException($"无法核实零件 {Path.GetFileName(partFilePath)} 的内轮廓或壁厚映射，未写入尺寸。");
         }
 
     }
@@ -1022,34 +1079,65 @@ public sealed class CommandDispatcher
             return false;
         }
 
-        var outerWidth = parseResult.Width ?? await ProbeCurrentDimensionValueAsync(
-            partFilePath,
-            widthDimensionName,
-            logWriter,
-            cancellationToken);
-        var outerHeight = parseResult.Height ?? await ProbeCurrentDimensionValueAsync(
-            partFilePath,
-            heightDimensionName,
-            logWriter,
-            cancellationToken);
-
-        if (!outerWidth.HasValue || !outerHeight.HasValue || !parseResult.Thickness.HasValue)
+        var innerWidthProbe = await ProbeTrussDimensionAsync(member, partFilePath, innerWidthDimensionName, logWriter, cancellationToken);
+        var innerHeightProbe = await ProbeTrussDimensionAsync(member, partFilePath, innerHeightDimensionName, logWriter, cancellationToken);
+        if (!innerWidthProbe.Found || !innerHeightProbe.Found)
         {
-            logWriter($"[TrussMapping] Unable to derive inner cut dimensions. Member={member.Id}, Mapping={mappingSource}, outerWidth={outerWidth?.ToString(CultureInfo.InvariantCulture) ?? "null"}, outerHeight={outerHeight?.ToString(CultureInfo.InvariantCulture) ?? "null"}, wallThickness={parseResult.Thickness?.ToString(CultureInfo.InvariantCulture) ?? "null"}");
-            throw new InvalidOperationException("当前配置中没有找到该参数的固定映射，请检查参数配置文件。");
+            return false;
         }
 
-        var wallThickness = parseResult.Thickness.Value;
+        var wallThickness = parseResult.Thickness;
+        var outerWidth = parseResult.Width;
+        var outerHeight = parseResult.Height;
+        if (!wallThickness.HasValue)
+        {
+            var currentWidthProbe = await ProbeTrussDimensionAsync(member, partFilePath, widthDimensionName, logWriter, cancellationToken);
+            var currentHeightProbe = await ProbeTrussDimensionAsync(member, partFilePath, heightDimensionName, logWriter, cancellationToken);
+            var currentWidth = currentWidthProbe.Found ? currentWidthProbe.CurrentValue : null;
+            var currentHeight = currentHeightProbe.Found ? currentHeightProbe.CurrentValue : null;
+            if (currentWidth is not > 0m || currentHeight is not > 0m ||
+                innerWidthProbe.CurrentValue is not > 0m || innerHeightProbe.CurrentValue is not > 0m)
+                return false;
+
+            outerWidth ??= currentWidth;
+            outerHeight ??= currentHeight;
+            var widthWall = (currentWidth.Value - innerWidthProbe.CurrentValue.Value) / 2m;
+            var heightWall = (currentHeight.Value - innerHeightProbe.CurrentValue.Value) / 2m;
+            const decimal wallToleranceMm = 0.001m;
+            if (widthWall <= 0m || heightWall <= 0m || Math.Abs(widthWall - heightWall) > wallToleranceMm)
+            {
+                throw new InvalidOperationException($"零件 {Path.GetFileName(partFilePath)} 的现有壁厚无法确定，请明确指定目标壁厚；未写入尺寸。");
+            }
+            wallThickness = Math.Round((widthWall + heightWall) / 2m, 6);
+            logWriter($"[TrussMapping] PreservedWallThicknessMm={wallThickness.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+        if (!outerWidth.HasValue)
+        {
+            var probe = await ProbeTrussDimensionAsync(member, partFilePath, widthDimensionName, logWriter, cancellationToken);
+            outerWidth = probe.Found ? probe.CurrentValue : null;
+        }
+        if (!outerHeight.HasValue)
+        {
+            var probe = await ProbeTrussDimensionAsync(member, partFilePath, heightDimensionName, logWriter, cancellationToken);
+            outerHeight = probe.Found ? probe.CurrentValue : null;
+        }
+        if (outerWidth is not decimal resolvedOuterWidth || resolvedOuterWidth <= 0m ||
+            outerHeight is not decimal resolvedOuterHeight || resolvedOuterHeight <= 0m ||
+            wallThickness is not decimal resolvedWallThickness || resolvedWallThickness <= 0m)
+        {
+            return false;
+        }
+
         var innerWidth = ResolveDerivedInnerValue(
             partMapping?.InnerWidthValueMode,
-            outerWidth.Value,
-            wallThickness,
+            resolvedOuterWidth,
+            resolvedWallThickness,
             "InnerWidth",
             logWriter);
         var innerHeight = ResolveDerivedInnerValue(
             partMapping?.InnerHeightValueMode,
-            outerHeight.Value,
-            wallThickness,
+            resolvedOuterHeight,
+            resolvedWallThickness,
             "InnerHeight",
             logWriter);
         if (innerWidth <= 0m || innerHeight <= 0m)
@@ -1060,29 +1148,12 @@ public sealed class CommandDispatcher
         LogLowerTrussLinkedPartValues(
             member,
             partFilePath,
-            outerWidth.Value,
-            outerHeight.Value,
-            wallThickness,
+            resolvedOuterWidth,
+            resolvedOuterHeight,
+            resolvedWallThickness,
             innerWidth,
             innerHeight,
             logWriter);
-
-        var innerWidthProbe = await _solidWorksService.ProbeDimensionAsync(
-            partFilePath,
-            innerWidthDimensionName,
-            logWriter,
-            cancellationToken);
-        var innerHeightProbe = await _solidWorksService.ProbeDimensionAsync(
-            partFilePath,
-            innerHeightDimensionName,
-            logWriter,
-            cancellationToken);
-
-        if (!innerWidthProbe.Found || !innerHeightProbe.Found)
-        {
-            logWriter($"[TrussMapping] Fallback to inner cut dimensions failed. PartFilePath={partFilePath}, InnerWidthDimensionName={innerWidthDimensionName}, InnerHeightDimensionName={innerHeightDimensionName}");
-            return false;
-        }
 
         logWriter($"[TrussMapping] Fallback to inner cut dimensions. PartFilePath={partFilePath}");
         if (partMapping is not null)
@@ -1091,16 +1162,17 @@ public sealed class CommandDispatcher
             logWriter($"[TrussMapping] InnerWidthOuterParameterKey={partMapping.InnerWidthOuterParameterKey}, InnerHeightOuterParameterKey={partMapping.InnerHeightOuterParameterKey}");
             logWriter($"[TrussMapping] InnerWidthThicknessParameterKey={partMapping.InnerWidthThicknessParameterKey}, InnerHeightThicknessParameterKey={partMapping.InnerHeightThicknessParameterKey}");
         }
-        logWriter($"[TrussMapping] outerWidth={outerWidth.Value.ToString(CultureInfo.InvariantCulture)}, outerHeight={outerHeight.Value.ToString(CultureInfo.InvariantCulture)}, wallThickness={wallThickness.ToString(CultureInfo.InvariantCulture)}, innerWidth={innerWidth.ToString(CultureInfo.InvariantCulture)}, innerHeight={innerHeight.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[TrussMapping] outerWidth={resolvedOuterWidth.ToString(CultureInfo.InvariantCulture)}, outerHeight={resolvedOuterHeight.ToString(CultureInfo.InvariantCulture)}, wallThickness={resolvedWallThickness.ToString(CultureInfo.InvariantCulture)}, innerWidth={innerWidth.ToString(CultureInfo.InvariantCulture)}, innerHeight={innerHeight.ToString(CultureInfo.InvariantCulture)}");
         logWriter($"[TrussMapping] Selected inner cut dimensions. InnerWidthDimensionName={innerWidthDimensionName}, InnerHeightDimensionName={innerHeightDimensionName}");
 
         var innerWidthRequest = CreateTrussMemberUpdateRequest(
             member,
             partFilePath,
             innerWidthDimensionName,
-            "鍐呰厰瀹藉害",
+            "内腔宽度",
             innerWidth,
-            parseResult.Unit);
+            parseResult.Unit,
+            innerWidthProbe.Configuration);
         requests.Add(innerWidthRequest);
         logWriter($"[TrussMapping] Created request. PartFilePath={innerWidthRequest.PartFilePath}, DimensionName={innerWidthRequest.DimensionName}");
 
@@ -1108,9 +1180,10 @@ public sealed class CommandDispatcher
             member,
             partFilePath,
             innerHeightDimensionName,
-            "鍐呰厰楂樺害",
+            "内腔高度",
             innerHeight,
-            parseResult.Unit);
+            parseResult.Unit,
+            innerHeightProbe.Configuration);
         requests.Add(innerHeightRequest);
         logWriter($"[TrussMapping] Created request. PartFilePath={innerHeightRequest.PartFilePath}, DimensionName={innerHeightRequest.DimensionName}");
 
@@ -1154,6 +1227,26 @@ public sealed class CommandDispatcher
             logWriter,
             cancellationToken);
         return probeResult.Found ? probeResult.CurrentValue : null;
+    }
+
+    private async Task<SolidWorksDimensionProbeResult> ProbeTrussDimensionAsync(
+        EditableTrussMemberItem member,
+        string partFilePath,
+        string dimensionName,
+        Action<string> logWriter,
+        CancellationToken cancellationToken)
+    {
+        if (!IsUpperChordMember(member))
+            return await _solidWorksService.ProbeDimensionAsync(partFilePath, dimensionName, logWriter, cancellationToken);
+
+        var probe = await _solidWorksService.ReadOpenDimensionAsync(partFilePath, dimensionName, logWriter, cancellationToken);
+        if (!probe.Found || !string.Equals(NormalizeScanPartFilePath(probe.PartFilePath), NormalizeScanPartFilePath(partFilePath), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(probe.ResolvedDimensionName, dimensionName, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(probe.Configuration) || probe.Configuration.StartsWith('<'))
+        {
+            throw new InvalidOperationException($"无法从当前总装配精确读取 {Path.GetFileName(partFilePath)} 的尺寸 {dimensionName}，未写入尺寸。{probe.Message}");
+        }
+        return probe;
     }
 
     private async Task<LowerTrussReportContext?> TryCreateLowerTrussReportContextAsync(
@@ -2064,14 +2157,15 @@ public sealed class CommandDispatcher
         string dimensionName,
         string dimensionLabel,
         decimal value,
-        string unit)
+        string unit,
+        string? configuration = null)
     {
         return new SolidWorksDimensionUpdateRequest
         {
             ParameterName = $"{member.Id}.{dimensionLabel}",
             DisplayName = $"{member.Name}{dimensionLabel}",
             PartFilePath = partFilePath,
-            Configuration = string.Empty,
+            Configuration = configuration ?? string.Empty,
             DimensionName = dimensionName,
             Value = value.ToString(CultureInfo.InvariantCulture),
             Unit = string.IsNullOrWhiteSpace(unit) ? member.Unit : unit
