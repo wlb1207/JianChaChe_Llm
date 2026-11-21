@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:models="clr-namespace:LlmWpfPrototype.Models"
+        xmlns:ui="clr-namespace:LlmWpfPrototype.Presentation"
         mc:Ignorable="d"
         Title="&#x6865;&#x6881;&#x68C0;&#x67E5;&#x8F66;&#x667A;&#x80FD;&#x8BBE;&#x8BA1;&#x52A9;&#x624B;"
         Height="920"
@@ -94,43 +95,28 @@
                                                        Foreground="#FF94A3B8"
                                                        Text="{Binding TimeDisplay}" />
                                         </DockPanel>
-                                        <TextBox Margin="0,8,0,0"
+                                        <TextBox x:Name="PlainReply" Margin="0,8,0,0"
                                                  Background="Transparent"
                                                  BorderThickness="0"
                                                  IsReadOnly="True"
                                                  Foreground="#FF0F172A"
                                                  TextWrapping="Wrap"
                                                  Text="{Binding Text}" />
-                                        <StackPanel Margin="0,6,0,0">
-                                            <StackPanel.Style>
-                                                <Style TargetType="StackPanel">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsLocalKnowledgeReply}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </StackPanel.Style>
-                                            <TextBlock Text="{Binding LocalCitationStatus}" TextWrapping="Wrap" />
-                                            <ItemsControl ItemsSource="{Binding LocalSources}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Expander Header="{Binding Heading}" Margin="0,4,0,0">
-                                                            <StackPanel>
-                                                                <TextBlock Text="{Binding Metadata}" TextWrapping="Wrap" />
-                                                                <TextBlock Text="{Binding VerificationLabel}" TextWrapping="Wrap" />
-                                                                <TextBox Text="{Binding FullText, Mode=OneWay}" IsReadOnly="True"
-                                                                         TextWrapping="Wrap" MaxHeight="240" VerticalScrollBarVisibility="Auto" />
-                                                            </StackPanel>
-                                                        </Expander>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </StackPanel>
+                                        <ContentControl x:Name="RagReply" Margin="0,8,0,0"
+                                                        Content="{Binding}" Visibility="Collapsed">
+                                            <ContentControl.ContentTemplate>
+                                                <DataTemplate>
+                                                    <ui:RagReplyView />
+                                                </DataTemplate>
+                                            </ContentControl.ContentTemplate>
+                                        </ContentControl>
                                     </StackPanel>
                                 </Border>
                                 <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsLocalKnowledgeReply}" Value="True">
+                                        <Setter TargetName="PlainReply" Property="Visibility" Value="Collapsed" />
+                                        <Setter TargetName="RagReply" Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
                                     <DataTrigger Binding="{Binding IsUser}" Value="True">
                                         <Setter TargetName="Bubble" Property="HorizontalAlignment" Value="Right" />
                                         <Setter TargetName="Bubble" Property="Background" Value="#FFE0F2FE" />
