@@ -24,10 +24,24 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         nameof(Citations), typeof(IReadOnlyList<LocalChatEvidence>), typeof(RagFormattedText),
         new FrameworkPropertyMetadata(null, RefreshDocument));
 
+    public static readonly DependencyProperty HideSourceReferencesProperty = DependencyProperty.Register(
+        nameof(HideSourceReferences), typeof(bool), typeof(RagFormattedText),
+        new FrameworkPropertyMetadata(false, RefreshDocument));
+
     private static readonly Regex DisplayBlock = new(
         @"^[ \t]*(?<formula>\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$)[ \t]*$", RegexOptions.Multiline);
     private static readonly Regex Heading = new(@"^[ \t]{0,3}#{1,6}[ \t]+(?<body>\S.*)$");
     private static readonly Regex ListItem = new(@"^[ \t]*(?<mark>[-*+•]|\d{1,6}[.)])[ \t]+(?<body>\S.*)$");
+    private static readonly Regex SourceMetadata = new(
+        @"(?im)^[ \t]*(?:Source|Topic|SourceType|Verified|Clause|Page|资料标注条款|条款号|页码|文件|原文位置)\s*[:：][^\n]*(?:\n|$)");
+    private static readonly Regex NumberedHeading = new(
+        @"(?m)^(?<prefix>[ \t]*#{1,6}[ \t]*)(?<number>\d+(?:\.\d+)*)(?:[ \t]+(?<title>[^\r\n]+))?[ \t]*$");
+    private static readonly Regex ChapterReference = new(
+        @"第\s*[0-9一二三四五六七八九十百]+(?:\.\d+)*\s*(?:章|节|条)");
+    private static readonly Regex InlineClauseReference = new(
+        @"(?:标准|条款)\s*\d+(?:\.\d+)+|附录\s*[A-Z](?![A-Za-z0-9])");
+    private static readonly Regex PageReference = new(
+        @"第\s*\d+(?:\s*[-–—至]\s*\d+)?\s*页");
     private static readonly Regex InlineToken = new(
         @"(?<formula>\\\([^\r\n]*?\\\)|\\\[[^\r\n]*?\\\]|\$\$[^\r\n]+?\$\$|(?<![\\$\w])\$(?![$\s])[^\r\n$]+\$(?![$\w]))"
         + @"|(?<code>`[^`\r\n]+`)|(?<strong>\*\*(?<stars>\S(?:.*?\S)?)\*\*|__(?<underscores>\S(?:.*?\S)?)__)"
@@ -48,6 +62,12 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         set => SetValue(CitationsProperty, value);
     }
 
+    public bool HideSourceReferences
+    {
+        get => (bool)GetValue(HideSourceReferencesProperty);
+        set => SetValue(HideSourceReferencesProperty, value);
+    }
+
     public RagFormattedText()
     {
         IsReadOnly = true;
@@ -58,13 +78,13 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         Background = Brushes.Transparent;
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
-        Document = BuildDocument("", null);
+        Document = BuildDocument("", null, false);
     }
 
     private static void RefreshDocument(DependencyObject sender, DependencyPropertyChangedEventArgs args)
     {
         var view = (RagFormattedText)sender;
-        view.Document = BuildDocument(view.Markup ?? "", view.Citations);
+        view.Document = BuildDocument(view.Markup ?? "", view.Citations, view.HideSourceReferences);
     }
 
     internal static string CitationLabel(string id) =>
@@ -72,11 +92,13 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
             ? "依据 " + id[1..]
             : "依据 " + id;
 
-    private static FlowDocument BuildDocument(string text, IReadOnlyList<LocalChatEvidence>? citations)
+    private static FlowDocument BuildDocument(string text, IReadOnlyList<LocalChatEvidence>? citations, bool hideSourceReferences)
     {
         var document = new FlowDocument { PagePadding = new Thickness(0), LineHeight = 22 };
         var sources = (citations ?? []).ToDictionary(source => source.Id, StringComparer.OrdinalIgnoreCase);
         var normalized = text.ReplaceLineEndings("\n");
+        if (hideSourceReferences)
+            normalized = HideReferencesInDisplay(normalized);
         var start = 0;
         foreach (Match match in DisplayBlock.Matches(normalized))
         {
@@ -93,6 +115,19 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         }
         AddTextBlocks(document, normalized[start..], sources);
         return document;
+    }
+
+    private static string HideReferencesInDisplay(string text)
+    {
+        var result = SourceMetadata.Replace(text, "");
+        result = NumberedHeading.Replace(result, match =>
+        {
+            var title = match.Groups["title"].Value;
+            return string.IsNullOrWhiteSpace(title) ? "" : match.Groups["prefix"].Value + title;
+        });
+        result = ChapterReference.Replace(result, "相关章节");
+        result = InlineClauseReference.Replace(result, "相关条文");
+        return PageReference.Replace(result, "相关内容");
     }
 
     private static void AddTextBlocks(FlowDocument document, string text,

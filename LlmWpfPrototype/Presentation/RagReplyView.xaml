@@ -9,7 +9,8 @@
         <ui:RagCitationStatusConverter x:Key="CitationStatus" />
     </UserControl.Resources>
     <StackPanel TextElement.FontSize="14" TextElement.Foreground="#FF0F172A">
-        <ui:RagFormattedText Markup="{Binding Text}" Citations="{Binding LocalSources}" />
+        <ui:RagFormattedText Markup="{Binding Text}" Citations="{Binding LocalSources}"
+                               HideSourceReferences="True" />
         <TextBlock Margin="0,8,0,0"
                    Foreground="#FF475569"
                    FontSize="12"
@@ -42,7 +43,7 @@
                 <TextBlock Text="本轮资料" FontWeight="SemiBold" Foreground="#FF173A58" />
                 <TextBlock Margin="0,4,0,6"
                            FontSize="12" Foreground="#FF475569" TextWrapping="Wrap"
-                           Text="正文中的「依据 1」等编号对应下方同号资料。展开可查看模型收到的片段。编号仅用于定位，资料未经人工核验，页码未确认。" />
+                           Text="正文中的「依据 1」等编号对应下方同号资料。所列片段尚未核验其对当前设计的适用性。" />
                 <ItemsControl ItemsSource="{Binding LocalSources}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -60,22 +61,9 @@
                                         </DataTemplate>
                                     </Expander.HeaderTemplate>
                                     <StackPanel Margin="0,8,0,2">
-                                        <TextBlock Foreground="#FF475569" FontSize="12" TextWrapping="Wrap">
-                                            <Run Text="资料标注条款 " />
-                                            <Run Text="{Binding Source.Clause, Mode=OneWay}" />
-                                        </TextBlock>
-                                        <TextBlock Margin="0,4" Text="{Binding VerificationLabel}" FontSize="12"
-                                                   Foreground="#FF64748B" TextWrapping="Wrap" />
                                         <ui:RagFormattedText Markup="{Binding SentText}" Margin="0,6,0,6"
-                                                             MaxHeight="260" VerticalScrollBarVisibility="Auto" />
-                                        <Expander Header="查看完整资料原文">
-                                            <StackPanel>
-                                                <TextBlock Margin="0,4" Text="{Binding Metadata}" FontSize="12"
-                                                           Foreground="#FF475569" TextWrapping="Wrap" />
-                                                <TextBox Text="{Binding FullText, Mode=OneWay}" IsReadOnly="True"
-                                                         TextWrapping="Wrap" MaxHeight="240" VerticalScrollBarVisibility="Auto" />
-                                            </StackPanel>
-                                        </Expander>
+                                                             MaxHeight="260" VerticalScrollBarVisibility="Auto"
+                                                             HideSourceReferences="True" />
                                     </StackPanel>
                                 </Expander>
                             </Border>
@@ -84,9 +72,5 @@
                 </ItemsControl>
             </StackPanel>
         </Border>
-        <Expander Margin="0,8,0,0" Header="查看回答原文" FontSize="12" Foreground="#FF475569">
-            <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True"
-                     TextWrapping="Wrap" MaxHeight="240" VerticalScrollBarVisibility="Auto" />
-        </Expander>
     </StackPanel>
 </UserControl>

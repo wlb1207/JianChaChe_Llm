@@ -100,7 +100,7 @@ public sealed class AutomaticKnowledgeChatService
         if (prepared.Plan.NeedsEvidence && prepared.Request.Sources.Count == 0)
         {
             KnowledgeDisclosureGuard.Validate(prepared.Request.Prompt);
-            const string insufficiencyAnswer = "现有资料不足，暂不能回答这个工程问题。请补充适用规范、条款或相关资料。";
+            const string insufficiencyAnswer = "现有资料不足，暂不能给出可靠的设计判断或推荐数值。请先说明要设计或校核的构件，以及已知的使用工况；不需要先知道规范编号。";
             return new LocalKnowledgeChatResult(insufficiencyAnswer,
                 "未找到可引用的本地依据，本轮未调用模型。", [], [], [])
             {

@@ -38,7 +38,7 @@ var llm = new FakeLlm();
 var vm = new MainViewModel(llm, dictionary, new ApdlReplacementService(), service, dispatcher, workspace,
     settings.Llm, chord, members, scans, recommendation, parser);
 
-const string engineeringQuestion = "请查询 GB/T 3811-2008 的安全系数是什么？";
+const string engineeringQuestion = "主梁的安全系数该怎么选？";
 var reply = await SendAsync(vm, engineeringQuestion);
 Require(reply.IsLocalKnowledgeReply && reply.LocalCitationStatus.Contains("有效引用编号：E1"),
     "The engineering query must use local knowledge and show a valid citation. " + reply.Text);
@@ -58,7 +58,7 @@ using (var prompt = JsonDocument.Parse(llm.KnowledgeRequests.Single()))
             source.GetProperty("source_ranges").GetArrayLength() > 0;
     }), "Citation sources do not match the selected evidence and source ranges.");
 }
-Console.WriteLine("PASS engineering lookup -> local retrieval -> protected evidence and visible citation");
+Console.WriteLine("PASS natural engineering question without a standard name retrieves protected evidence and produces a citation");
 
 llm.KnowledgeAnswer = "未经验证的固定结论 [E999]。";
 var invalid = await SendAsync(vm, engineeringQuestion);
@@ -74,7 +74,8 @@ Console.WriteLine("PASS unsupported model claims are suppressed on invalid or mi
 
 var noEvidence = await SendAsync(vm, "GB/T 999999-2099 的火星磁流体规范如何定义？");
 Require(noEvidence.IsLocalKnowledgeReply && noEvidence.LocalSources.Count == 0 &&
-    llm.KnowledgeRequests.Count == 3 && llm.DesignRequests.Count == 0 && cad.MutatingCalls == 0,
+    llm.KnowledgeRequests.Count == 3 && llm.DesignRequests.Count == 0 && cad.MutatingCalls == 0 &&
+    noEvidence.Text.Contains("构件") && noEvidence.Text.Contains("使用工况"),
     "A query with no eligible evidence must return a local reply without model or CAD calls. " + noEvidence.Text);
 Console.WriteLine("PASS missing evidence returns an answer locally without an unsupported model conclusion");
 
