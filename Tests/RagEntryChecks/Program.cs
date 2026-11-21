@@ -35,8 +35,12 @@ var recommendation = new TrussParameterMappingRecommendationService(scans);
 var dispatcher = new CommandDispatcher(service, workspace, members, parser, scans, recommendation,
     new TrussParameterSetupStateService(service, scans, members));
 var llm = new FakeLlm();
+var simulation = new SimulationOptions { LauncherPath = Path.Combine(workspaceRoot, "launcher.exe") };
+Directory.CreateDirectory(workspaceRoot);
+File.WriteAllText(simulation.LauncherPath, "Launcher stand-in. The test injects a recording start delegate.");
+var launcherStarts = new List<string>();
 var vm = new MainViewModel(llm, dictionary, new ApdlReplacementService(), service, dispatcher, workspace,
-    settings.Llm, chord, members, scans, recommendation, parser);
+    settings.Llm, chord, members, scans, recommendation, parser, simulation, launcherStarts.Add);
 
 const string engineeringQuestion = "主梁的安全系数该怎么选？";
 var reply = await SendAsync(vm, engineeringQuestion);
@@ -156,6 +160,22 @@ Require(plan.Count(item => item.PartFilePath.EndsWith("-379.SLDPRT", StringCompa
 Require(plan.Count(item => item.Value == "1290" && item.ParameterName == "upper_chord.linked_red_tube_length") == 2,
     "The plan did not compensate both red tubes.");
 Console.WriteLine("PASS model-open and confirmed 60x60 commands reach CAD sandbox fakes with all 12 dimensions");
+
+var beforeSimulation = (llm.DesignRequests.Count, llm.KnowledgeRequests.Count, cad.MutatingCalls, cad.DimensionReadCalls);
+var launch = await SendAsync(vm, "打开 ANSYS APDL");
+Require(launcherStarts.SequenceEqual(new[] { simulation.LauncherPath }) &&
+    launch.Text.Contains("启动器已启动") && !launch.Text.Contains("仿真完成"), "APDL launch route failed.");
+var blockedStudy = await SendAsync(vm, "运行轻量化仿真");
+Require(blockedStudy.Text.Contains("还没有配置") && !blockedStudy.Text.Contains("正在"), "Unconfigured study was not rejected.");
+var baseline = await SendAsync(vm, "读取轻量化基线");
+Require(baseline.Text.Contains("用户提供") && !baseline.Text.Contains("实测"), "No verified baseline must be distinguished from the reference.");
+Require(beforeSimulation == (llm.DesignRequests.Count, llm.KnowledgeRequests.Count, cad.MutatingCalls, cad.DimensionReadCalls),
+    "An explicit simulation command incorrectly reached the model or CAD.");
+await SendAsync(vm, "不要打开 ANSYS APDL");
+await SendAsync(vm, "怎么打开 ANSYS APDL？");
+Require(launcherStarts.Count == 1 && cad.MutatingCalls == beforeSimulation.Item3,
+    "An APDL question or negation launched an executable or reached CAD.");
+Console.WriteLine("PASS APDL launch and simulation status use local chat commands with no implicit launch or solve");
 
 void WriteFixture(string relative)
 {

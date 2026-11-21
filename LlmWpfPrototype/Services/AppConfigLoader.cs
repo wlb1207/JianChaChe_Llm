@@ -26,7 +26,8 @@ public static class AppConfigLoader
         return new AppSettings
         {
             Llm = ReadLlmOptions(root),
-            SolidWorksWorkspace = ReadSolidWorksWorkspaceOptions(root)
+            SolidWorksWorkspace = ReadSolidWorksWorkspaceOptions(root),
+            Simulation = ReadSimulationOptions(root)
         };
     }
 
@@ -56,6 +57,24 @@ public static class AppConfigLoader
     public static string GetConfigPath()
     {
         return AppPaths.GetBundledConfigPath("appsettings.json");
+    }
+
+    private static SimulationOptions ReadSimulationOptions(JsonElement root)
+    {
+        if (!root.TryGetProperty("Simulation", out var section) || section.ValueKind != JsonValueKind.Object)
+            return new SimulationOptions();
+
+        string ReadPath(string name) =>
+            section.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? ""
+                : "";
+
+        return new SimulationOptions
+        {
+            LauncherPath = ReadPath("LauncherPath"),
+            SolverPath = ReadPath("SolverPath"),
+            StudyFile = ReadPath("StudyFile")
+        };
     }
 
     private static LlmOptions ReadLlmOptions(JsonElement root)

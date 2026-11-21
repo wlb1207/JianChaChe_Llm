@@ -57,7 +57,8 @@ public partial class MainWindow : Window
             editableTrussMemberCatalogService,
             dimensionScanCatalogService,
             trussParameterMappingRecommendationService,
-            trussMemberCommandParser);
+            trussMemberCommandParser,
+            appSettings.Simulation);
 
         _viewModel = DataContext as MainViewModel;
         workspaceManager.ResetSessionCacheOnStartup(message => _viewModel?.AppendSystemLog(message));

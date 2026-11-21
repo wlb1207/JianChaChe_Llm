@@ -173,7 +173,9 @@ public sealed partial class MainViewModel : ObservableObject
         EditableTrussMemberCatalogService editableTrussMemberCatalogService,
         DimensionScanCatalogService dimensionScanCatalogService,
         TrussParameterMappingRecommendationService trussParameterMappingRecommendationService,
-        TrussMemberCommandParser trussMemberCommandParser)
+        TrussMemberCommandParser trussMemberCommandParser,
+        SimulationOptions? simulationOptions = null,
+        Action<string>? startAnsysLauncher = null)
     {
         _llmService = llmService;
         _parameterDictionaryService = parameterDictionaryService;
@@ -187,6 +189,8 @@ public sealed partial class MainViewModel : ObservableObject
         _dimensionScanCatalogService = dimensionScanCatalogService;
         _trussParameterMappingRecommendationService = trussParameterMappingRecommendationService;
         _trussMemberCommandParser = trussMemberCommandParser;
+        _simulationOptions = simulationOptions ?? new SimulationOptions();
+        _startAnsysLauncher = startAnsysLauncher ?? StartAnsysLauncher;
         _llmService.DiagnosticLogEmitted += message => AppendLog(message, source: "LlmService");
 
         ChatMessages = new ObservableCollection<ChatMessage>();
@@ -416,6 +420,9 @@ public sealed partial class MainViewModel : ObservableObject
                 return "生成中...";
             }
 
+            if (IsSimulationChatCommand(UserInput))
+                return "发送";
+
             if (_pendingBusinessPlan is not null)
             {
                 return string.IsNullOrWhiteSpace(UserInput) ? "确认修改" : "发送";
@@ -519,6 +526,9 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
+        if (IsSimulationChatCommand(UserInput))
+            return true;
+
         if (DesignStatus == StatusPendingConfirmation)
         {
             return Parameters.Any() || _pendingBusinessPlan is not null && !string.IsNullOrWhiteSpace(UserInput);
@@ -529,7 +539,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     private bool CanReparse()
     {
-        return !_isGeneratingModel && !_isLocalKnowledgeBusy && _pendingBusinessPlan is null && ChatMessages.Count > 0;
+        return !_isGeneratingModel && !_isLocalKnowledgeBusy && _pendingBusinessPlan is null &&
+               ChatMessages.Count > 0 && !IsSimulationChatCommand(UserInput);
     }
 
     private bool CanGenerateApdl()
@@ -592,6 +603,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task HandlePrimaryActionAsync()
     {
+        if (IsSimulationChatCommand(UserInput))
+        {
+            await SendUserMessageAsync();
+            return;
+        }
+
         if (DesignStatus == StatusPendingConfirmation)
         {
             if (_pendingBusinessPlan is not null)
@@ -642,6 +659,13 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         AddUserMessage(input);
+        if (IsSimulationChatCommand(input))
+        {
+            UserInput = string.Empty;
+            await HandleSimulationChatAsync(input);
+            return;
+        }
+
         _lastSubmittedInput = input;
         UserInput = string.Empty;
 
@@ -1871,7 +1895,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ReparseAsync()
     {
-        if (_isGeneratingModel)
+        if (_isGeneratingModel || IsSimulationChatCommand(UserInput))
         {
             return;
         }
