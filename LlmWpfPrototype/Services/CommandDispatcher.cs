@@ -613,7 +613,7 @@ public sealed class CommandDispatcher
                     lowerChordLinkedPartExecutionResult switch
                     {
                         { PartFound: false } => "下弦杆已修改，但下弦杆联动零件未找到，未同步更新。",
-                        { UpdateSucceeded: true, RequestsCreatedCount: 4 } => "已完成：桁架下弦杆 60mm x 60mm x 6mm，并已同步更新下弦杆联动零件。",
+                        { UpdateSucceeded: true, RequestsCreatedCount: > 0 } => $"已完成：桁架下弦杆 {BuildLinkedPartRequestedSpec(parseResult)} mm，并已同步更新下弦杆联动零件。",
                         _ => "下弦杆已修改，但下弦杆联动零件尺寸更新失败，请查看日志。"
                     });
             }
