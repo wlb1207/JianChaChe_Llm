@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Simulation;
 using LlmWpfPrototype.ViewModels;
 
 Console.OutputEncoding = Encoding.UTF8;
@@ -12,6 +13,7 @@ Require(Path.TrimEndingDirectorySeparator(AppPaths.BaseDirectory) == Path.TrimEn
 
 var workspaceRoot = Path.Combine(Path.GetTempPath(), "RagEntryChecks", Guid.NewGuid().ToString("N"));
 var settings = AppConfigLoader.LoadSettings();
+var configuredLlmOptions = JsonSerializer.Deserialize<LlmOptions>(JsonSerializer.Serialize(settings.Llm))!;
 settings.Llm.Mode = "Mock";
 settings.SolidWorksWorkspace = new SolidWorksWorkspaceOptions
 {
@@ -175,7 +177,106 @@ await SendAsync(vm, "不要打开 ANSYS APDL");
 await SendAsync(vm, "怎么打开 ANSYS APDL？");
 Require(launcherStarts.Count == 1 && cad.MutatingCalls == beforeSimulation.Item3,
     "An APDL question or negation launched an executable or reached CAD.");
-Console.WriteLine("PASS APDL launch and simulation status use local chat commands with no implicit launch or solve");
+
+foreach (var naturalLaunch in new[] { "打开仿真软件", "我看下仿真软件", "你先打开 apdl", "你可以打开 apdl 吗", "APDL" })
+{
+    var startCount = launcherStarts.Count;
+    var requestCount = llm.DesignRequests.Count;
+    var result = await SendAsync(vm, naturalLaunch);
+    Require(launcherStarts.Count == startCount + 1 && llm.DesignRequests.Count == requestCount + 1 &&
+        llm.LastOptions?.AllowApdlLauncherAction == true &&
+        launcherStarts.LastOrDefault() == simulation.LauncherPath &&
+        result.Text.Contains("启动器已启动") && !result.Text.Contains("仿真完成"),
+        $"Natural-language APDL launch intent failed for '{naturalLaunch}'. {result.Text}");
+}
+
+var launchesAfterNaturalLanguage = launcherStarts.Count;
+foreach (var nonLaunch in new[] { "APDL 是什么？", "不要打开 APDL", "帮我写 APDL 脚本", "怎么运行 APDL 求解？", "我只是问问你能不能打开 APDL" })
+{
+    await SendAsync(vm, nonLaunch);
+}
+Require(launcherStarts.Count == launchesAfterNaturalLanguage && cad.MutatingCalls == beforeSimulation.Item3,
+    "An APDL information request, script request, solver question, or negation launched an executable or reached CAD.");
+
+Require(ApdlLaunchIntentPolicy.IsCandidate("APDL") &&
+    ApdlLaunchIntentPolicy.IsCandidate("我看下仿真软件") &&
+    !ApdlLaunchIntentPolicy.IsCandidate("APDL 是什么？") &&
+    !ApdlLaunchIntentPolicy.IsCandidate("我只是问问你能不能打开 APDL") &&
+    !ApdlLaunchIntentPolicy.IsCandidate("帮我写 APDL 脚本"),
+    "The local APDL intent boundary accepted an information or script request.");
+
+llm.ForceMixedApdlAction = true;
+var mixedIntent = await SendAsync(vm, "打开仿真软件");
+Require(launcherStarts.Count == launchesAfterNaturalLanguage && mixedIntent.Text.Contains("其他操作"),
+    "A mixed APDL launcher and CAD action was not rejected as a whole.");
+llm.ForceMixedApdlAction = false;
+
+llm.ForceApdlAction = true;
+await SendAsync(vm, "帮我写 APDL 脚本");
+foreach (var negative in new[] { "不打开APDL", "不用启动APDL", "不要帮我打开APDL", "别给我打开APDL", "不需要启动ANSYS" })
+{
+    Require(!ApdlLaunchIntentPolicy.IsCandidate(negative), "A negated request became a launcher candidate: " + negative);
+    await SendAsync(vm, negative);
+}
+Require(launcherStarts.Count == launchesAfterNaturalLanguage,
+    "A model-proposed launcher action bypassed the local user-intent safety check.");
+llm.ForceApdlAction = false;
+
+foreach (var pendingInput in new[] { "APDL", "我看下仿真软件" })
+{
+    vm.Parameters.Clear();
+    vm.Parameters.Add(new ParameterItem { Name = "pending-test", MappingStatus = "OK", SolidWorksTargets = [new SolidWorksTarget()] });
+    typeof(MainViewModel).GetProperty(nameof(MainViewModel.DesignStatus))!.SetValue(vm, "待确认");
+    var beforePendingLaunch = launcherStarts.Count;
+    var beforePendingCad = cad.MutatingCalls;
+    var pendingLaunch = await SendAsync(vm, pendingInput);
+    Require(launcherStarts.Count == beforePendingLaunch + 1 && cad.MutatingCalls == beforePendingCad &&
+        pendingLaunch.Text.Contains("启动器已启动"),
+        "The real primary-action entry in pending-confirmation state went to CAD instead of APDL.");
+}
+vm.Parameters.Clear();
+typeof(MainViewModel).GetProperty(nameof(MainViewModel.DesignStatus))!.SetValue(vm, "待输入");
+
+var productionLlm = new LlmService(settings.Llm, dictionary);
+var normalizeLlmReply = typeof(LlmService).GetMethod("NormalizeModelResponseWithDiagnostics",
+    BindingFlags.Instance | BindingFlags.NonPublic)!;
+LlmParseResult NormalizeApdlReply(string json, bool allow) =>
+    JsonSerializer.Deserialize<LlmParseResult>((string)normalizeLlmReply.Invoke(productionLlm,
+        new object?[] { json, "我看下仿真软件", new LlmChatRequestOptions(AllowApdlLauncherAction: allow) })!)!;
+const string launchJson = """{"reply":"准备启动。","actions":["open_apdl_launcher"],"commands":["open_apdl_launcher"],"parameters":[],"needConfirmation":false,"questions":[]}""";
+Require(NormalizeApdlReply(launchJson, true).Actions.SequenceEqual(new[] { "open_apdl_launcher" }) &&
+    NormalizeApdlReply(launchJson, false).Actions.Count == 0,
+    "The production LLM parser did not preserve the explicitly allowed APDL action or exposed it to ordinary CAD requests.");
+const string mixedJson = """{"reply":"已打开且修改。","actions":["update_solidworks_dimensions"],"commands":["open_apdl_launcher"],"parameters":[],"needConfirmation":false,"questions":[]}""";
+var rejectedMixed = NormalizeApdlReply(mixedJson, true);
+Require(rejectedMixed.Actions.Count == 0 && rejectedMixed.NeedConfirmation &&
+    !rejectedMixed.Reply.Contains("已打开"), "The production parser hid a mixed action and allowed the launcher.");
+var buildPrompt = typeof(LlmService).GetMethod("BuildUnifiedConversationSystemPrompt", BindingFlags.Static | BindingFlags.NonPublic)!;
+var launchPrompt = (string)buildPrompt.Invoke(null, new object?[] { new LlmChatRequestOptions(AllowApdlLauncherAction: true) })!;
+Require(launchPrompt.Contains("open_apdl_launcher") && launchPrompt.Contains("我看下仿真软件") &&
+    launchPrompt.Contains("does not connect to a solver"), "The real model request did not expose the bounded launcher capability.");
+Console.WriteLine("PASS APDL launcher uses bounded natural-language intent and keeps information, script, negation, and solver questions action-free");
+Console.WriteLine("PASS production LLM prompt and response parser accept only the scoped APDL action and reject mixed actions");
+
+if (args.Contains("--live-apdl", StringComparer.Ordinal))
+{
+    Require(configuredLlmOptions.Mode == "Cloud" && configuredLlmOptions.Model == "gpt-6.1-sol",
+        "Live APDL intent checks require the current configured cloud model.");
+    var liveStarts = new List<string>();
+    var realLlm = new LlmService(configuredLlmOptions, dictionary);
+    var liveVm = new MainViewModel(realLlm, dictionary, new ApdlReplacementService(), service, dispatcher, workspace,
+        configuredLlmOptions, chord, members, scans, recommendation, parser, simulation, liveStarts.Add);
+    foreach (var liveInput in new[] { "APDL", "打开仿真软件", "我看下仿真软件", "你先打开apdl" })
+    {
+        var beforeStarts = liveStarts.Count;
+        var beforeCadCalls = cad.MutatingCalls;
+        var answer = await SendAsync(liveVm, liveInput, TimeSpan.FromSeconds(240));
+        Require(liveStarts.Count == beforeStarts + 1 && liveStarts.Last() == simulation.LauncherPath &&
+            answer.Text.Contains("启动器已启动") && cad.MutatingCalls == beforeCadCalls,
+            "Live GPT chat did not select only the launcher intent for: " + liveInput);
+        Console.WriteLine("PASS LIVE GPT-6.1 chat intent: " + liveInput + "; configured launcher delegate recorded; no CAD or solver started");
+    }
+}
 
 void WriteFixture(string relative)
 {
@@ -187,7 +288,7 @@ void WriteFixture(string relative)
     File.WriteAllText(path, "test fixture, not a CAD model");
 }
 
-static async Task<ChatMessage> SendAsync(MainViewModel viewModel, string text)
+static async Task<ChatMessage> SendAsync(MainViewModel viewModel, string text, TimeSpan? timeout = null)
 {
     viewModel.UserInput = text;
     var command = viewModel.PrimaryActionCommand;
@@ -202,7 +303,7 @@ static async Task<ChatMessage> SendAsync(MainViewModel viewModel, string text)
     try
     {
         command.Execute(null);
-        await completed.Task.WaitAsync(TimeSpan.FromSeconds(12));
+        await completed.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(12));
     }
     finally
     {
@@ -279,12 +380,20 @@ sealed class FakeLlm : ILlmService
     public List<(string Input, IReadOnlyList<ConversationMessage> History)> DesignRequests { get; } = [];
     public List<string> KnowledgeRequests { get; } = [];
     public string KnowledgeAnswer { get; set; } = "请参考安全系数资料 [E1]。";
+    public bool ForceApdlAction { get; set; }
+    public bool ForceMixedApdlAction { get; set; }
+    public LlmChatRequestOptions? LastOptions { get; private set; }
 
     public Task<string> ParseDesignRequirementAsync(string userInput, IReadOnlyList<ConversationMessage>? history = null,
         LlmChatRequestOptions? options = null, CancellationToken cancellationToken = default)
     {
         DesignRequests.Add((userInput, history?.ToArray() ?? []));
-        var answer = userInput == "打开当前模型" && options?.ReplyOnlyMode != true
+        LastOptions = options;
+        var answer = ForceMixedApdlAction
+            ? """{"reply":"正在打开并修改 CAD。","actions":["open_apdl_launcher","update_solidworks_dimensions"],"commands":["open_apdl_launcher","update_solidworks_dimensions"],"parameters":[],"needConfirmation":false,"questions":[]}"""
+            : ForceApdlAction || (options?.AllowApdlLauncherAction == true && ApdlLaunchIntentPolicy.IsCandidate(userInput))
+            ? """{"reply":"正在打开 ANSYS APDL。","actions":["open_apdl_launcher"],"commands":["open_apdl_launcher"],"parameters":[],"needConfirmation":false,"questions":[]}"""
+            : userInput == "打开当前模型" && options?.ReplyOnlyMode != true
             ? """{"reply":"","actions":["open_working_model"],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}"""
             : """{"reply":"这是普通对话答复。","actions":[],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}""";
         return Task.FromResult(answer);

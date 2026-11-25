@@ -11,6 +11,7 @@ using System.Windows;
 using System.Windows.Threading;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Simulation;
 
 namespace LlmWpfPrototype.ViewModels;
 
@@ -420,7 +421,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return "生成中...";
             }
 
-            if (IsSimulationChatCommand(UserInput))
+            if (IsSimulationEntryInput(UserInput))
                 return "发送";
 
             if (_pendingBusinessPlan is not null)
@@ -526,7 +527,7 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
-        if (IsSimulationChatCommand(UserInput))
+        if (IsSimulationEntryInput(UserInput))
             return true;
 
         if (DesignStatus == StatusPendingConfirmation)
@@ -540,7 +541,7 @@ public sealed partial class MainViewModel : ObservableObject
     private bool CanReparse()
     {
         return !_isGeneratingModel && !_isLocalKnowledgeBusy && _pendingBusinessPlan is null &&
-               ChatMessages.Count > 0 && !IsSimulationChatCommand(UserInput);
+               ChatMessages.Count > 0 && !IsSimulationEntryInput(UserInput);
     }
 
     private bool CanGenerateApdl()
@@ -603,7 +604,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task HandlePrimaryActionAsync()
     {
-        if (IsSimulationChatCommand(UserInput))
+        if (IsSimulationEntryInput(UserInput))
         {
             await SendUserMessageAsync();
             return;
@@ -707,6 +708,8 @@ public sealed partial class MainViewModel : ObservableObject
             _lastExecutableActionSucceeded = false;
             var normalizedInput = NormalizeIntentText(input);
             var isQuestionOnlyInput = IsQuestionOnlyInput(input);
+            var apdlLaunchCandidate = ApdlLaunchIntentPolicy.IsCandidate(input);
+            AppendLog($"[APDL Intent] LlmClassificationCandidate={apdlLaunchCandidate}");
             var hasExplicitModificationCommand = !isQuestionOnlyInput && HasExplicitModificationCommand(input, normalizedInput);
             AppendOpenModelIntentDiagnostics(input, normalizedInput);
 
@@ -757,7 +760,8 @@ public sealed partial class MainViewModel : ObservableObject
             AppendResetIntentDiagnostics(input);
 
             var classifiedIntent = ClassifyUserIntent(input);
-            if (classifiedIntent is UserIntentKind.Greeting or UserIntentKind.CapabilityQuestion or UserIntentKind.NextStepQuery)
+            if (!apdlLaunchCandidate &&
+                (classifiedIntent is UserIntentKind.Greeting or UserIntentKind.CapabilityQuestion or UserIntentKind.NextStepQuery))
             {
                 AppendLog($"[Intent] {classifiedIntent}");
                 AppendLog("[IntentGuard] LocalIntentDetected=True");
@@ -841,10 +845,10 @@ public sealed partial class MainViewModel : ObservableObject
                 }
             }
 
-            var shouldBypassPendingForClarification = ShouldBypassPendingModificationForClarification(
-                input,
-                normalizedInput,
-                hasExplicitModificationCommand);
+            var shouldBypassPendingForClarification = apdlLaunchCandidate || ShouldBypassPendingModificationForClarification(
+                    input,
+                    normalizedInput,
+                    hasExplicitModificationCommand);
             ExpirePendingModificationContextIfNeeded();
             if (shouldBypassPendingForClarification)
             {
@@ -856,7 +860,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
 
             AppendLog($"[IntentGuard] QuestionOnlyInput={isQuestionOnlyInput}");
-            if (isQuestionOnlyInput)
+            if (isQuestionOnlyInput && !apdlLaunchCandidate)
             {
                 AppendLog("[IntentGuard] LocalHandled=False AllowLlmReply=True");
                 AppendLog("[IntentGuard] ReplyOnlyMode=True");
@@ -945,11 +949,14 @@ public sealed partial class MainViewModel : ObservableObject
 
             AppendLog($"[ConversationHistory] BeforeRequest HistoryCount={_conversationHistory.Count}");
             AppendLog($"[ConversationHistory] RequestMessages.Count={_conversationHistory.Count + 2}");
-            var requestOptions = replyOnlyIntent is null
-                ? null
-                : new LlmChatRequestOptions(
-                    ReplyOnlyMode: true,
-                    IntentLabel: replyOnlyIntent.IntentLabel);
+            var requestOptions = apdlLaunchCandidate
+                ? new LlmChatRequestOptions(
+                    ReplyOnlyMode: replyOnlyIntent is not null,
+                    IntentLabel: replyOnlyIntent?.IntentLabel ?? "APDLLauncherIntent",
+                    AllowApdlLauncherAction: true)
+                : replyOnlyIntent is not null
+                    ? new LlmChatRequestOptions(ReplyOnlyMode: true, IntentLabel: replyOnlyIntent.IntentLabel)
+                    : null;
             var json = await _llmService.ParseDesignRequirementAsync(input, _conversationHistory, requestOptions);
             JsonOutput = FormatJson(json);
             _llmRuntimeStatus = "在线";
@@ -964,7 +971,14 @@ public sealed partial class MainViewModel : ObservableObject
                     TruncateForLog(json));
             }
 
-            await HandleParsedResultAsync(parseResult, json, input, replyOnlyIntent);
+            if (apdlLaunchCandidate)
+            {
+                await HandleApdlLauncherActionAsync(parseResult, input, json);
+            }
+            else
+            {
+                await HandleParsedResultAsync(parseResult, json, input, replyOnlyIntent);
+            }
         }
         catch (LlmResponseParseException ex)
         {
@@ -1190,6 +1204,12 @@ public sealed partial class MainViewModel : ObservableObject
             parseResult.Questions = [];
         }
 
+        if (HasApdlLauncherAction(parseResult))
+        {
+            await HandleApdlLauncherActionAsync(parseResult, userInput);
+            return;
+        }
+
         BindParameters(parseResult);
 
         var llmReply = ResolveAssistantReply(parseResult, rawResponse);
@@ -1353,6 +1373,67 @@ public sealed partial class MainViewModel : ObservableObject
             RefreshSummaryProperties();
             RefreshActionState();
         }
+    }
+
+    private static bool HasApdlLauncherAction(LlmParseResult parseResult) =>
+        (parseResult.Actions ?? []).Concat(parseResult.Commands ?? [])
+            .Any(action => string.Equals(action?.Trim(), "open_apdl_launcher", StringComparison.OrdinalIgnoreCase));
+
+    private async Task HandleApdlLauncherActionAsync(
+        LlmParseResult parseResult,
+        string userInput,
+        string rawResponse = "")
+    {
+        if (!HasApdlLauncherAction(parseResult))
+        {
+            AppendLog("[APDL Intent] StructuredActionReturned=False");
+            var clarificationReply = ResolveAssistantReply(parseResult, rawResponse);
+            if (string.IsNullOrWhiteSpace(clarificationReply))
+                clarificationReply = "本轮没有确认到启动 APDL 的意图，因此没有启动软件。你可以说“打开仿真软件”或“打开 APDL”。";
+            clarificationReply = RewriteAssistantReplyIfExecutionNotSucceeded(
+                clarificationReply, userInput, parseResult,
+                actionRequested: false, handled: false, succeeded: false,
+                fallbackReply: "本轮没有实际启动 APDL。你可以说“打开仿真软件”或“打开 APDL”。");
+            AppendLog($"[AI Reply] {clarificationReply}");
+            AddAssistantMessage(clarificationReply);
+            AppendConversationHistory(userInput, clarificationReply);
+            return;
+        }
+
+        var actions = (parseResult.Actions ?? []).Concat(parseResult.Commands ?? [])
+            .Where(action => !string.IsNullOrWhiteSpace(action))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var hasAdditionalAction = actions.Any(action =>
+            !string.Equals(action.Trim(), "open_apdl_launcher", StringComparison.OrdinalIgnoreCase));
+
+        string reply;
+        if (!ApdlLaunchIntentPolicy.IsCandidate(userInput))
+        {
+            AppendLog("[APDL Intent] BlockedReason=InputDoesNotRequestLauncher");
+            reply = "我没有确认到启动 APDL 的明确意图，因此本轮没有启动软件。你可以说“打开仿真软件”或“打开 APDL”。";
+        }
+        else if (hasAdditionalAction || parseResult.Parameters.Count > 0 || parseResult.NeedConfirmation)
+        {
+            AppendLog("[APDL Intent] BlockedReason=MixedOrIncompleteAction");
+            reply = "这句话还包含其他操作或待确认内容。为避免误操作，本轮没有启动 APDL；请把启动软件的请求单独发送。";
+        }
+        else
+        {
+            AppendLog("[APDL Intent] StructuredActionAccepted=True");
+            var messageCount = ChatMessages.Count;
+            await HandleSimulationChatAsync(userInput, launcherSelectedByLlm: true);
+            var assistantReply = ChatMessages.Skip(messageCount).LastOrDefault(message => !message.IsUser)?.Text;
+            if (!string.IsNullOrWhiteSpace(assistantReply))
+            {
+                AppendConversationHistory(userInput, assistantReply);
+            }
+            return;
+        }
+
+        AppendLog($"[AI Reply] {reply}");
+        AddAssistantMessage(reply);
+        AppendConversationHistory(userInput, reply);
     }
 
     private async Task GenerateMainFlowAsync()
@@ -1895,7 +1976,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ReparseAsync()
     {
-        if (_isGeneratingModel || IsSimulationChatCommand(UserInput))
+        if (_isGeneratingModel || IsSimulationEntryInput(UserInput))
         {
             return;
         }

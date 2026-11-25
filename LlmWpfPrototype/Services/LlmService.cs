@@ -436,7 +436,7 @@ public sealed partial class LlmService : ILlmService
     {
         try
         {
-            var repairPrompt = BuildJsonRepairPrompt(originalUserInput, originalAssistantContent);
+            var repairPrompt = BuildJsonRepairPrompt(originalUserInput, originalAssistantContent, requestOptions);
             var repairResponseText = await SendChatCompletionAsync(
                 repairPrompt,
                 conversationHistory: null,
@@ -464,9 +464,12 @@ public sealed partial class LlmService : ILlmService
         }
     }
 
-    private string BuildJsonRepairPrompt(string originalUserInput, string originalAssistantContent)
+    private string BuildJsonRepairPrompt(string originalUserInput, string originalAssistantContent, LlmChatRequestOptions? requestOptions)
     {
-        var schemaJson = JsonSerializer.Serialize(CreateJsonSchema(), CompactJsonOptions);
+        var schemaJson = JsonSerializer.Serialize(CreateJsonSchema(), CompactJsonOptions);
+        var apdlAction = requestOptions?.AllowApdlLauncherAction == true
+            ? "- open_apdl_launcher (configured local launcher only; not a solver run)\n"
+            : string.Empty;
         return $"""
 You must repair the previous assistant output into a valid JSON object that deserializes to LlmParseResult.
 Original user input:
@@ -482,8 +485,8 @@ Current supported actions/commands:
 - recommend_truss_parameter_mapping
 - confirm_truss_parameter_mapping
 - open_working_model
-- update_solidworks_dimensions
-Requirements:
+- update_solidworks_dimensions
+{apdlAction}Requirements:
 - Output exactly one JSON object.
 - Do not output Markdown, code fences, or explanatory text.
 - The object must include reply, message, assistantText, actions, commands, parameters, needConfirmation, questions.
@@ -620,9 +623,9 @@ Requirements:
 
 
 
-            var actionJsonContract = requestOptions?.ReplyOnlyMode != true;
+            var actionJsonContract = requestOptions?.ReplyOnlyMode != true || requestOptions?.AllowApdlLauncherAction == true;
             EmitDiagnostic($"[LLM Chat] ActionJsonContract={actionJsonContract}");
-            EmitDiagnostic($"[LLM Chat] ActionJsonContractReason={(actionJsonContract ? "ActionGenerationRequired" : "ReplyOnlyMode")}");
+            EmitDiagnostic($"[LLM Chat] ActionJsonContractReason={(requestOptions?.AllowApdlLauncherAction == true ? "APDLLauncherIntentClassification" : actionJsonContract ? "ActionGenerationRequired" : "ReplyOnlyMode")}");
 
             var requestId = Guid.NewGuid().ToString("N");
 
@@ -650,7 +653,7 @@ Requirements:
             {
                 return NormalizeModelResponseWithDiagnostics(responseText, userInput, requestOptions);
             }
-            catch (LlmResponseParseException) when (requestOptions?.ReplyOnlyMode != true)
+            catch (LlmResponseParseException) when (requestOptions?.ReplyOnlyMode != true || requestOptions?.AllowApdlLauncherAction == true)
             {
                 EmitDiagnostic("[LLM Chat] JsonRepairRetry=True");
                 EmitDiagnostic("[LLM Chat] JsonRepairRetryReason=NonReplyOnlyParseFailure");
@@ -946,7 +949,7 @@ Requirements:
 
         {
 
-            var normalized = NormalizeModelResponse(content, userInput);
+            var normalized = NormalizeModelResponse(content, userInput, requestOptions);
 
             var parseResult = JsonSerializer.Deserialize<LlmParseResult>(normalized, ParseOptions)
 
@@ -2270,7 +2273,7 @@ Requirements:
 
 
 
-    private string NormalizeModelResponse(string content, string userInput)
+    private string NormalizeModelResponse(string content, string userInput, LlmChatRequestOptions? requestOptions)
 
     {
 
@@ -2288,7 +2291,7 @@ Requirements:
 
                 ?? new LlmParseResult();
 
-            NormalizeParseResultShape(parseResult, userInput);
+            NormalizeParseResultShape(parseResult, userInput, requestOptions);
 
             return JsonSerializer.Serialize(parseResult, JsonOptions);
 
@@ -2700,10 +2703,31 @@ Requirements:
 
 
 
-    private void NormalizeParseResultShape(LlmParseResult parseResult, string userInput)
+    private void NormalizeParseResultShape(LlmParseResult parseResult, string userInput, LlmChatRequestOptions? requestOptions)
 
     {
 
+        if (requestOptions?.AllowApdlLauncherAction == true)
+        {
+            var requestedActions = (parseResult.Actions ?? []).Concat(parseResult.Commands ?? [])
+                .Where(action => !string.IsNullOrWhiteSpace(action))
+                .Select(NormalizeActionName)
+                .ToArray();
+            if (requestedActions.Any(action => !action.Equals("open_apdl_launcher", StringComparison.OrdinalIgnoreCase)) ||
+                parseResult.Parameters.Count > 0)
+            {
+                EmitDiagnostic("[APDL Intent] RejectedMixedModelActions=True");
+                parseResult.Actions = [];
+                parseResult.Commands = [];
+                parseResult.Parameters = [];
+                parseResult.NeedConfirmation = true;
+                parseResult.Reply = "本轮包含启动软件之外的操作，为避免误操作没有执行。请把打开 APDL 的请求单独发送。";
+                parseResult.Message = parseResult.Reply;
+                parseResult.AssistantText = parseResult.Reply;
+                return;
+            }
+        }
+
         if (parseResult.Commands is { Count: > 0 })
 
         {
@@ -2730,7 +2754,7 @@ Requirements:
 
 
 
-        parseResult.Actions = BuildNormalizedActions(userInput, parseResult);
+        parseResult.Actions = BuildNormalizedActions(userInput, parseResult, requestOptions);
 
         parseResult.Commands = parseResult.Actions.ToList();
 
@@ -3622,8 +3646,26 @@ Rules:
 
 
 
-        if (requestOptions?.ReplyOnlyMode != true)
+        if (requestOptions?.AllowApdlLauncherAction == true)
+        {
+            return """
+You interpret a user's intent in a bridge inspection vehicle design application.
+The application can start its configured local ANSYS APDL launcher. You select intent; the application validates and executes it.
+Return exactly one JSON object using this shape:
+{"reply":"","actions":[],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}
+Do not output Markdown, invent file paths, supply executable arguments, or claim an action has already run.
+APDL launcher intent classification for this turn:
+- This is the only executable action you may return: `open_apdl_launcher`.
+- It opens the already configured local ANSYS APDL launcher UI only. It does not connect to a solver, run an analysis, or claim simulation results.
+- Interpret these as requests to open the application: a standalone `APDL`, `ANSYS`, or `仿真软件`; `打开仿真软件`; `我看下仿真软件`; and polite requests such as `你可以打开 APDL 吗`.
+- Do not return an action for questions about what APDL is, how to use it, how to write scripts, loads, materials, boundary conditions, solver results, or analysis workflow.
+- Never return an action for a negated, cancelled, or explicitly deferred request.
+- Return only `open_apdl_launcher` in both `actions` and `commands`, with `parameters=[]`, when opening is intended. Otherwise return empty actions, commands, and parameters and answer normally.
+- Do not return any SolidWorks, CAD modification, reset, or solve action in this mode.
+""";
+        }
 
+        if (requestOptions?.ReplyOnlyMode != true)
         {
 
             return basePrompt + """
@@ -3687,7 +3729,7 @@ Reply-only override for this turn:
 
 
 
-    private static List<string> BuildNormalizedActions(string userInput, LlmParseResult parseResult)
+    private static List<string> BuildNormalizedActions(string userInput, LlmParseResult parseResult, LlmChatRequestOptions? requestOptions)
 
     {
 
@@ -3695,7 +3737,10 @@ Reply-only override for this turn:
 
             .Select(NormalizeActionName)
 
-            .Where(IsDispatchableAction)
+            .Where(IsDispatchableAction)
+            .Where(action => requestOptions?.AllowApdlLauncherAction == true
+                ? action.Equals("open_apdl_launcher", StringComparison.OrdinalIgnoreCase)
+                : !action.Equals("open_apdl_launcher", StringComparison.OrdinalIgnoreCase))
 
             .Where(action => !string.IsNullOrWhiteSpace(action))
 
@@ -3797,8 +3842,14 @@ Reply-only override for this turn:
 
             var value when value.Equals("open_working_model", StringComparison.OrdinalIgnoreCase) => "open_working_model",
 
-            var value when value.Equals("update_solidworks_dimensions", StringComparison.OrdinalIgnoreCase) => "update_solidworks_dimensions",
-
+            var value when value.Equals("update_solidworks_dimensions", StringComparison.OrdinalIgnoreCase) => "update_solidworks_dimensions",
+
+            var value when value.Equals("open_apdl_launcher", StringComparison.OrdinalIgnoreCase) => "open_apdl_launcher",
+
+            var value when value.Equals("open_ansys_launcher", StringComparison.OrdinalIgnoreCase) => "open_apdl_launcher",
+
+            var value when value.Equals("launch_apdl", StringComparison.OrdinalIgnoreCase) => "open_apdl_launcher",
+
             var value when value.Equals("open_model", StringComparison.OrdinalIgnoreCase) => "open_working_model",
 
             var value when value.Equals("open_current_model", StringComparison.OrdinalIgnoreCase) => "open_working_model",
@@ -3837,7 +3888,9 @@ Reply-only override for this turn:
 
                action.Equals("open_working_model", StringComparison.OrdinalIgnoreCase) ||
 
-               action.Equals("update_solidworks_dimensions", StringComparison.OrdinalIgnoreCase);
+               action.Equals("update_solidworks_dimensions", StringComparison.OrdinalIgnoreCase) ||
+
+               action.Equals("open_apdl_launcher", StringComparison.OrdinalIgnoreCase);
 
     }
 

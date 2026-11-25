@@ -28,26 +28,22 @@ public sealed partial class MainViewModel
 
     private static bool IsSimulationChatCommand(string text) => ParseSimulationCommand(text) != SimulationCommand.None;
 
-    private async Task HandleSimulationChatAsync(string input)
+    private static bool IsSimulationEntryInput(string text) =>
+        IsSimulationChatCommand(text) || ApdlLaunchIntentPolicy.IsCandidate(text);
+
+    private async Task HandleSimulationChatAsync(string input, bool launcherSelectedByLlm = false)
     {
         var command = ParseSimulationCommand(input);
         try
         {
+            if (command == SimulationCommand.OpenAnsys || launcherSelectedByLlm)
+            {
+                StartConfiguredAnsysLauncher();
+                return;
+            }
+
             switch (command)
             {
-                case SimulationCommand.OpenAnsys:
-                    var path = _simulationOptions.LauncherPath;
-                    if (!Path.IsPathFullyQualified(path) || !File.Exists(path) ||
-                        !string.Equals(Path.GetFileName(path), "launcher.exe", StringComparison.OrdinalIgnoreCase))
-                    {
-                        AddAssistantMessage("未找到 ANSYS 启动器。请检查程序配置中的 Simulation.LauncherPath。");
-                        return;
-                    }
-                    _startAnsysLauncher(path);
-                    AddAssistantMessage("ANSYS APDL 启动器已启动。你可以在启动器中选择运行方式。");
-                    AppendLog("[APDL] LauncherProcessStarted=True");
-                    return;
-
                 case SimulationCommand.ReadBaseline:
                     if (!_workspaceManager.HasOpenedWorkingModel || _solidWorksService is not SolidWorksService cad)
                     {
@@ -84,6 +80,22 @@ public sealed partial class MainViewModel
             AppendLog($"[APDL] {command} Failed: {exception.Message}");
             AddAssistantMessage($"操作未完成。{exception.Message}");
         }
+    }
+
+    private void StartConfiguredAnsysLauncher()
+    {
+        var path = _simulationOptions.LauncherPath;
+        if (!Path.IsPathFullyQualified(path) || !File.Exists(path) ||
+            !string.Equals(Path.GetFileName(path), "launcher.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog("[APDL] LauncherValidationFailed=True");
+            AddAssistantMessage("未找到 ANSYS 启动器。请检查程序配置中的 Simulation.LauncherPath。");
+            return;
+        }
+
+        _startAnsysLauncher(path);
+        AddAssistantMessage("ANSYS APDL 启动器已启动。你可以在启动器中选择运行方式。");
+        AppendLog("[APDL] LauncherProcessStarted=True");
     }
 
     private static string FormatLightweightBaseline(LightweightBaselineResult baseline)
