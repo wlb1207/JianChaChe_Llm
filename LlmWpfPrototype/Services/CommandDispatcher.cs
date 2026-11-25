@@ -16,9 +16,8 @@ public sealed class CommandDispatcher
     private const string UpdateSolidWorksDimensionsAction = "update_solidworks_dimensions";
     private const string ValueModeOuterMinusTwoThickness = "OuterMinusTwoThickness";
     private const string LowerTrussMemberId = EditableTrussMemberCatalogService.LowerTrussMemberId;
-    private const string LockedLowerTrussModelPath = @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\初始模型\桁架2\1-7方管70×70×5-1159.SLDPRT";
-    private const string LinkedLowerTrussModelPath = @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\新模型\桁架2\1-方管70×70×5-1159.SLDPRT";
-    private const string LinkedLowerTrussSectionModelPath = @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\新模型\桁架1\1-方管70×70×5-1530.SLDPRT";
+    private const string LowerTrussPrimaryRelativePartPath = @"桁架2\1-方管70×70×5-1159.SLDPRT";
+    private const string LowerTrussLinked1530RelativePartPath = @"桁架1\1-方管70×70×5-1530.SLDPRT";
     private const string LinkedLowerTrussSectionPartName = "1-方管70×70×5-1530.Part";
     private const string LinkedLowerTrussSectionWidthDimension = "D1@草图1@1-方管70×70×5-1530.Part";
     private const string LinkedLowerTrussSectionHeightDimension = "D2@草图1@1-方管70×70×5-1530.Part";
@@ -1004,7 +1003,7 @@ public sealed class CommandDispatcher
                 {
                     logWriter($"[TrussMapping] WallThicknessMappingScheme=DirectThicknessDimension; Member={member.Id}; Mapping={mappingSource}; DimensionName={thicknessDimensionName}");
                     if (string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(partFilePath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(Path.GetFullPath(partFilePath), GetExpectedLowerTrussModelPath(), StringComparison.OrdinalIgnoreCase))
                     {
                         logWriter("[LowerTruss] ThinFeatureThicknessUpdate=True");
                     }
@@ -1268,36 +1267,7 @@ public sealed class CommandDispatcher
             throw new InvalidOperationException("下桁架未配置可执行的 PartMapping。");
         }
 
-        var configuredPath = mapping.PartFilePath?.Trim() ?? string.Empty;
-        if (!string.Equals(configuredPath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException($"下桁架模型路径配置错误。必须严格等于：{LockedLowerTrussModelPath}");
-        }
-
-        if (!File.Exists(configuredPath))
-        {
-            throw new FileNotFoundException($"下桁架模型不存在：{configuredPath}", configuredPath);
-        }
-
-        var modelPath = configuredPath;
-
-        var outer = parseResult.Width ?? parseResult.Height;
-        var thickness = parseResult.Thickness;
-        if (!outer.HasValue || !thickness.HasValue)
-        {
-            throw new InvalidOperationException("下桁架修改必须提供完整规格 A×A×T。");
-        }
-
-        var inner = ResolveDerivedInnerValue(
-            mapping.InnerWidthValueMode,
-            outer.Value,
-            thickness.Value,
-            "LowerTrussInnerWidth",
-            logWriter);
-        if (inner <= 0m)
-        {
-            throw new InvalidOperationException("下桁架壁厚数值过大，内边长计算结果无效。");
-        }
+        var modelPath = ResolveTrussMemberPartFilePath(lowerTrussMember, mapping, logWriter);
 
         var dimensions = new List<LowerTrussDimensionReportItem>();
         foreach (var dimensionName in new[]
@@ -1327,6 +1297,40 @@ public sealed class CommandDispatcher
                 string.IsNullOrWhiteSpace(probe.ResolvedDimensionName) ? dimensionName : probe.ResolvedDimensionName,
                 probe.CurrentValue,
                 null));
+        }
+
+        var outer = parseResult.Width ?? parseResult.Height;
+        if (!outer.HasValue && dimensions[0].BeforeValue is decimal currentOuter && currentOuter > 0m)
+        {
+            outer = currentOuter;
+        }
+
+        var thickness = parseResult.Thickness;
+        if (!thickness.HasValue &&
+            dimensions[0].BeforeValue is decimal beforeOuter && beforeOuter > 0m &&
+            dimensions[2].BeforeValue is decimal beforeInner && beforeInner > 0m)
+        {
+            var inferredThickness = (beforeOuter - beforeInner) / 2m;
+            if (inferredThickness > 0m)
+            {
+                thickness = Math.Round(inferredThickness, 6);
+            }
+        }
+
+        if (!outer.HasValue || !thickness.HasValue)
+        {
+            throw new InvalidOperationException("下桁架修改必须提供有效的截面尺寸或壁厚。");
+        }
+
+        var inner = ResolveDerivedInnerValue(
+            mapping.InnerWidthValueMode,
+            outer.Value,
+            thickness.Value,
+            "LowerTrussInnerWidth",
+            logWriter);
+        if (inner <= 0m)
+        {
+            throw new InvalidOperationException("下桁架壁厚数值过大，内边长计算结果无效。");
         }
 
         return new LowerTrussReportContext(
@@ -1745,30 +1749,31 @@ public sealed class CommandDispatcher
             return LinkedLowerTrussSectionPartPlan.Disabled;
         }
 
+        var target1530ModelPath = GetExpectedLowerTrussLinked1530ModelPath();
         if (existingRequests.Any(request =>
-                string.Equals(request.PartFilePath, LinkedLowerTrussSectionModelPath, StringComparison.OrdinalIgnoreCase)))
+                string.Equals(Path.GetFullPath(request.PartFilePath), target1530ModelPath, StringComparison.OrdinalIgnoreCase)))
         {
             logWriter("[Linked1530Part] Skip Reason=RequestsAlreadyGenerated");
-            logWriter($"[Linked1530Part] TargetPath={LinkedLowerTrussSectionModelPath}");
+            logWriter($"[Linked1530Part] TargetPath={target1530ModelPath}");
             return LinkedLowerTrussSectionPartPlan.Disabled;
         }
 
         logWriter("[Linked1530Part] Enabled=True");
         logWriter("[Linked1530Part] Trigger=LowerChordOrLowerTrussSectionModification");
-        logWriter($"[Linked1530Part] TargetPath={LinkedLowerTrussSectionModelPath}");
-        logWriter($"[Linked1530Part] Exists={File.Exists(LinkedLowerTrussSectionModelPath)}");
+        logWriter($"[Linked1530Part] TargetPath={target1530ModelPath}");
+        logWriter($"[Linked1530Part] Exists={File.Exists(target1530ModelPath)}");
         logWriter($"[Linked1530Part] RequestedSpec={BuildLinkedPartRequestedSpec(parseResult)}");
 
-        if (!File.Exists(LinkedLowerTrussSectionModelPath))
+        if (!File.Exists(target1530ModelPath))
         {
             logWriter("[Linked1530Part] Skip Reason=TargetPartNotFound");
             return LinkedLowerTrussSectionPartPlan.Disabled;
         }
 
         var widthDimensionName = await ResolveLinkedRuleDimensionNameAsync(
-            LinkedLowerTrussSectionModelPath,
+            target1530ModelPath,
             BuildPartSpecificDimensionNameCandidates(
-                LinkedLowerTrussSectionModelPath,
+                target1530ModelPath,
                 [
                     LinkedLowerTrussSectionWidthDimension,
                     "D1@草图1",
@@ -1777,9 +1782,9 @@ public sealed class CommandDispatcher
             logWriter,
             cancellationToken);
         var heightDimensionName = await ResolveLinkedRuleDimensionNameAsync(
-            LinkedLowerTrussSectionModelPath,
+            target1530ModelPath,
             BuildPartSpecificDimensionNameCandidates(
-                LinkedLowerTrussSectionModelPath,
+                target1530ModelPath,
                 [
                     LinkedLowerTrussSectionHeightDimension,
                     "D2@草图1",
@@ -1788,9 +1793,9 @@ public sealed class CommandDispatcher
             logWriter,
             cancellationToken);
         var thicknessDimensionName = await ResolveLinkedRuleDimensionNameAsync(
-            LinkedLowerTrussSectionModelPath,
+            target1530ModelPath,
             BuildPartSpecificDimensionNameCandidates(
-                LinkedLowerTrussSectionModelPath,
+                target1530ModelPath,
                 [
                     LinkedLowerTrussSectionThicknessDimension,
                     "T1@拉伸-薄壁1",
@@ -1819,7 +1824,7 @@ public sealed class CommandDispatcher
         var requests = new List<SolidWorksDimensionUpdateRequest>();
         AddLinkedLowerTrussSection1530Request(
             requests,
-            LinkedLowerTrussSectionModelPath,
+            target1530ModelPath,
             widthDimensionName,
             "linked_lower_truss_section_1530.width",
             "下部联动零件1530截面宽度",
@@ -1827,7 +1832,7 @@ public sealed class CommandDispatcher
             logWriter);
         AddLinkedLowerTrussSection1530Request(
             requests,
-            LinkedLowerTrussSectionModelPath,
+            target1530ModelPath,
             heightDimensionName,
             "linked_lower_truss_section_1530.height",
             "下部联动零件1530截面高度",
@@ -1835,19 +1840,19 @@ public sealed class CommandDispatcher
             logWriter);
         AddLinkedLowerTrussSection1530Request(
             requests,
-            LinkedLowerTrussSectionModelPath,
+            target1530ModelPath,
             thicknessDimensionName,
             "linked_lower_truss_section_1530.thickness",
             "下部联动零件1530壁厚",
             parseResult.Thickness.Value,
             logWriter);
 
-        logWriter($"[Linked1530Part] {Path.GetFileName(LinkedLowerTrussSectionModelPath)}: {TrimPartSuffix(widthDimensionName)} = {parseResult.Width.Value.ToString(CultureInfo.InvariantCulture)}");
-        logWriter($"[Linked1530Part] {Path.GetFileName(LinkedLowerTrussSectionModelPath)}: {TrimPartSuffix(heightDimensionName)} = {parseResult.Height.Value.ToString(CultureInfo.InvariantCulture)}");
-        logWriter($"[Linked1530Part] {Path.GetFileName(LinkedLowerTrussSectionModelPath)}: {TrimPartSuffix(thicknessDimensionName)} = {parseResult.Thickness.Value.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[Linked1530Part] {Path.GetFileName(target1530ModelPath)}: {TrimPartSuffix(widthDimensionName)} = {parseResult.Width.Value.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[Linked1530Part] {Path.GetFileName(target1530ModelPath)}: {TrimPartSuffix(heightDimensionName)} = {parseResult.Height.Value.ToString(CultureInfo.InvariantCulture)}");
+        logWriter($"[Linked1530Part] {Path.GetFileName(target1530ModelPath)}: {TrimPartSuffix(thicknessDimensionName)} = {parseResult.Thickness.Value.ToString(CultureInfo.InvariantCulture)}");
         logWriter($"[Linked1530Part] CreatedRequestsCount={requests.Count}");
 
-        return new LinkedLowerTrussSectionPartPlan(true, true, LinkedLowerTrussSectionModelPath, requests);
+        return new LinkedLowerTrussSectionPartPlan(true, true, target1530ModelPath, requests);
     }
 
     private static void AddLinkedLowerTrussSection1530Request(
@@ -2040,6 +2045,12 @@ public sealed class CommandDispatcher
         return candidates;
     }
 
+    private string GetExpectedLowerTrussModelPath()
+        => Path.GetFullPath(Path.Combine(_workspaceManager.WorkingModelFolder, LowerTrussPrimaryRelativePartPath));
+
+    private string GetExpectedLowerTrussLinked1530ModelPath()
+        => Path.GetFullPath(Path.Combine(_workspaceManager.WorkingModelFolder, LowerTrussLinked1530RelativePartPath));
+
     private string ResolveTrussMemberPartFilePath(
         EditableTrussMemberItem member,
         EditableTrussMemberPartMapping mapping,
@@ -2050,41 +2061,40 @@ public sealed class CommandDispatcher
             return ResolveConfiguredPartFilePathPortable(mapping.RelativePartPath, mapping.PartFilePath, logWriter);
         }
 
-        var configuredPath = mapping.PartFilePath?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(configuredPath))
+        var rawConfigured = !string.IsNullOrWhiteSpace(mapping.RelativePartPath)
+            ? mapping.RelativePartPath
+            : mapping.PartFilePath;
+        if (string.IsNullOrWhiteSpace(rawConfigured))
         {
             throw new InvalidOperationException("下桁架 PartMapping 缺少固定零件路径配置。");
         }
 
-        if (string.Equals(configuredPath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
-            !File.Exists(configuredPath))
+        var resolvedPath = ResolveConfiguredPartFilePathPortable(mapping.RelativePartPath, mapping.PartFilePath, logWriter);
+        if (string.IsNullOrWhiteSpace(resolvedPath) || !IsUnderWorkingModelFolder(resolvedPath))
         {
-            throw new FileNotFoundException($"下桁架模型不存在：{configuredPath}", configuredPath);
+            throw new InvalidOperationException($"下桁架 PartMapping 路径不在当前工作区目录中：{rawConfigured}");
         }
 
-        if (string.Equals(configuredPath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
-            !File.Exists(configuredPath))
+        var expectedPrimaryPath = GetExpectedLowerTrussModelPath();
+        var expectedSection1530Path = GetExpectedLowerTrussLinked1530ModelPath();
+        var normalizedResolvedPath = Path.GetFullPath(resolvedPath);
+
+        if (!string.Equals(normalizedResolvedPath, expectedPrimaryPath, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(normalizedResolvedPath, expectedSection1530Path, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FileNotFoundException($"下桁架联动零件不存在：{configuredPath}", configuredPath);
+            throw new InvalidOperationException($"下桁架 PartMapping 路径未在允许列表中：{normalizedResolvedPath}");
         }
 
-        if (string.Equals(configuredPath, LinkedLowerTrussSectionModelPath, StringComparison.OrdinalIgnoreCase) &&
-            !File.Exists(configuredPath))
+        if (!File.Exists(normalizedResolvedPath))
         {
-            throw new FileNotFoundException($"下桁架联动零件不存在：{configuredPath}", configuredPath);
+            throw new FileNotFoundException($"下桁架模型不存在：{normalizedResolvedPath}", normalizedResolvedPath);
         }
 
-        if (!string.Equals(configuredPath, LockedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(configuredPath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(configuredPath, LinkedLowerTrussSectionModelPath, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException($"下桁架 PartMapping 路径未在允许列表中：{configuredPath}");
-        }
-
-        return configuredPath;
+        WorkspaceSafetyPolicy.RejectLinks(normalizedResolvedPath);
+        return normalizedResolvedPath;
     }
 
-    private static void LogLowerTrussLinkedPartDefinition(
+    private void LogLowerTrussLinkedPartDefinition(
         EditableTrussMemberItem member,
         string partFilePath,
         string widthDimensionName,
@@ -2094,7 +2104,7 @@ public sealed class CommandDispatcher
         Action<string> logWriter)
     {
         if (!string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(partFilePath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(Path.GetFullPath(partFilePath), GetExpectedLowerTrussModelPath(), StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
@@ -2107,7 +2117,7 @@ public sealed class CommandDispatcher
         logWriter($"[LinkedLowerTrussPart] InnerHeightDimension={TrimPartSuffix(innerHeightDimensionName)}");
     }
 
-    private static void LogLowerTrussLinkedPartValues(
+    private void LogLowerTrussLinkedPartValues(
         EditableTrussMemberItem member,
         string partFilePath,
         decimal outerWidth,
@@ -2118,7 +2128,7 @@ public sealed class CommandDispatcher
         Action<string> logWriter)
     {
         if (!string.Equals(member.Id, LowerTrussMemberId, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(partFilePath, LinkedLowerTrussModelPath, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(Path.GetFullPath(partFilePath), GetExpectedLowerTrussModelPath(), StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
@@ -2369,7 +2379,8 @@ public sealed class CommandDispatcher
                          fileName,
                          SearchOption.AllDirectories))
             {
-                if (IsUnderWorkingModelFolder(matchedPath))
+                if (IsUnderWorkingModelFolder(matchedPath) &&
+                    !IsNonWorkingSubtreeUnderWorkingFolder(matchedPath))
                 {
                     matchedPaths.Add(Path.GetFullPath(matchedPath));
                 }
@@ -2415,6 +2426,17 @@ public sealed class CommandDispatcher
                member.Id.StartsWith("lower_chord", StringComparison.OrdinalIgnoreCase);
     }
 
+    private bool IsNonWorkingSubtreeUnderWorkingFolder(string path)
+    {
+        if (!IsUnderWorkingModelFolder(path))
+            return true;
+        var relative = Path.GetRelativePath(_workspaceManager.WorkingModelFolder, Path.GetFullPath(path));
+        var segments = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        return segments.Any(segment =>
+            string.Equals(segment, "backup", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(segment, "初始模型", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static string SelectPreferredLowerSectionLinkedCompensationPartPath(IReadOnlyList<string> candidateParts)
     {
         if (candidateParts.Count == 0)
@@ -2422,18 +2444,21 @@ public sealed class CommandDispatcher
             return string.Empty;
         }
 
+        bool IsCleanWorkingCandidate(string path) =>
+            !path.Contains($"{Path.DirectorySeparatorChar}backup{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) &&
+            !path.Contains($"{Path.DirectorySeparatorChar}初始模型{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
+
         var preferredNonBackup = candidateParts.FirstOrDefault(path =>
             path.Contains($"{Path.DirectorySeparatorChar}桁架2{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) &&
-            !path.Contains($"{Path.DirectorySeparatorChar}backup{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+            IsCleanWorkingCandidate(path));
         if (!string.IsNullOrWhiteSpace(preferredNonBackup))
         {
             return preferredNonBackup;
         }
 
-        var nonBackup = candidateParts.FirstOrDefault(path =>
-            !path.Contains($"{Path.DirectorySeparatorChar}backup{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+        var nonBackup = candidateParts.FirstOrDefault(IsCleanWorkingCandidate);
         return string.IsNullOrWhiteSpace(nonBackup)
-            ? candidateParts[0]
+            ? string.Empty
             : nonBackup;
     }
 
@@ -2648,7 +2673,6 @@ public sealed class CommandDispatcher
 
         if (Path.IsPathRooted(normalizedPath))
         {
-            AddPortableCandidatePath(candidates, "AbsoluteRaw", normalizedPath);
             var rootedAfterNewModelPath = TryTrimPortableAfterDirectorySegment(normalizedPath, "新模型");
             if (!string.IsNullOrWhiteSpace(rootedAfterNewModelPath))
             {
@@ -2660,6 +2684,8 @@ public sealed class CommandDispatcher
             {
                 AddPortableCandidatePath(candidates, "WorkingPlusFromTrussFolder", Path.Combine(workingModelPath, rootedFromTrussPath));
             }
+
+            AddPortableCandidatePath(candidates, "AbsoluteRaw", normalizedPath);
 
             return candidates;
         }

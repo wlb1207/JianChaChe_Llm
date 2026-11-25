@@ -1,4 +1,5 @@
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Chat;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services.Rag;
 using System.Text.RegularExpressions;
@@ -8,7 +9,6 @@ namespace LlmWpfPrototype.ViewModels;
 public sealed partial class MainViewModel
 {
     private bool _isLocalKnowledgeBusy;
-    private readonly List<ConversationMessage> _knowledgeConversationHistory = [];
     private CancellationTokenSource? _chatCancellation;
     private string _chatStatus = "工程问题自动结合相关资料；云端生成会发送问题及本轮选中的资料片段。";
     private string? _chatRetrievalTopic;
@@ -29,28 +29,32 @@ public sealed partial class MainViewModel
     private static bool IsLiveParameterQuery(string input)
     {
         var text = NormalizeIntentText(input);
-        if (IsNegativeOrCancelModificationText(input) ||
+        if (IsNegativeActionIntent(input) ||
             System.Text.RegularExpressions.Regex.IsMatch(text, @"如何|怎样|怎么|为什么|建议|假如|例如|能否|可以")) return false;
         if (!System.Text.RegularExpressions.Regex.IsMatch(text, @"上弦杆|下弦杆|下桁架|可编辑参数")) return false;
         return System.Text.RegularExpressions.Regex.IsMatch(text, @"^(请|帮我|麻烦)*(查询|读取|查看|显示|获取).*(参数|尺寸|截面|壁厚)") ||
             System.Text.RegularExpressions.Regex.IsMatch(text, @"(当前|现在).*(截面|壁厚|尺寸|参数).*(多少|多大|当前值)");
     }
 
-    private bool ShouldUseKnowledgeChat(string input, string normalized, UserIntentKind intent,
-        ReplyOnlyIntentContext? replyOnly, bool hasExplicitModificationCommand)
+    private bool ShouldUseKnowledgeChat(
+        string input,
+        string normalized,
+        bool isNegativeOrCancel,
+        bool isAppCapabilityOrStatusQuestion,
+        bool hasExplicitModificationCommand,
+        bool isApdlLaunchCandidate)
     {
-        if (IsLiveParameterQuery(input) || IsExplicitManualTrussMappingIntent(input)
-            || replyOnly is not null && replyOnly.IntentLabel != "PureQuestion")
-            return false;
-
-        if (replyOnly is null)
-        {
-            if (intent != UserIntentKind.Unknown || hasExplicitModificationCommand || Regex.IsMatch(normalized,
-                @"^(?:请|帮我|麻烦|我要|我想|给我)*(?:把|将|打开|加载|启动|开启|关闭|修改|改|调整|加厚|保存|查询|读取|查看|扫描|配置|重置|恢复|还原|生成|导出|执行|运行|确认|取消)"))
-                return false;
-        }
-
-        return AutomaticKnowledgeChatService.Plan(input, _knowledgeConversationHistory, _chatRetrievalTopic).NeedsEvidence;
+        return ChatTurnRouter.ShouldRouteToKnowledgeChat(
+            input: input,
+            normalizedInput: normalized,
+            isNegativeOrCancel: isNegativeOrCancel,
+            isLiveParameterQuery: IsLiveParameterQuery(input) || ChatTurnRouter.IsPoliteEditableParameterQuery(input, normalized),
+            isManualTrussMappingIntent: IsExplicitManualTrussMappingIntent(input),
+            isAppCapabilityOrStatusQuestion: isAppCapabilityOrStatusQuestion,
+            isExplicitModificationCommand: hasExplicitModificationCommand,
+            isApdlLaunchCandidate: isApdlLaunchCandidate,
+            knowledgeHistory: _memoryStore.GetKnowledgeHistory(),
+            previousRetrievalTopic: _chatRetrievalTopic);
     }
 
     private async Task SendAutomaticChatMessageAsync(string question)
@@ -67,7 +71,7 @@ public sealed partial class MainViewModel
         _isLocalKnowledgeBusy = true;
         OnPropertyChanged(nameof(IsChatBusy));
         RefreshActionState();
-        var history = _knowledgeConversationHistory.ToArray();
+        var history = _memoryStore.GetKnowledgeHistory();
         ChatStatus = "正在理解问题、按需检索并请求模型回答；问答不会执行工程操作。";
         try
         {
@@ -80,13 +84,11 @@ public sealed partial class MainViewModel
                 RoleDisplay = "AI", Text = result.Answer, IsLocalKnowledgeReply = true,
                 LocalSources = result.Sources, LocalCitationStatus = result.CitationStatus
             });
-            if (result.UserProvenance is not null && result.AnswerProvenance is not null)
-            {
-                _knowledgeConversationHistory.Add(new ConversationMessage { Role = "user", Content = question, KnowledgeProvenance = result.UserProvenance });
-                _knowledgeConversationHistory.Add(new ConversationMessage { Role = "assistant", Content = result.Answer, KnowledgeProvenance = result.AnswerProvenance });
-                while (_knowledgeConversationHistory.Count > MaxConversationHistoryMessages)
-                    _knowledgeConversationHistory.RemoveAt(0);
-            }
+            _memoryStore.RecordKnowledgeTurn(
+                question,
+                result.Answer,
+                result.UserProvenance,
+                result.AnswerProvenance);
             if (result.CitedIds.Count > 0 && result.InvalidIds.Count == 0)
             {
                 _llmRuntimeStatus = "在线";

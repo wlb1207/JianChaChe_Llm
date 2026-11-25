@@ -258,6 +258,89 @@ Require(launchPrompt.Contains("open_apdl_launcher") && launchPrompt.Contains("�
 Console.WriteLine("PASS APDL launcher uses bounded natural-language intent and keeps information, script, negation, and solver questions action-free");
 Console.WriteLine("PASS production LLM prompt and response parser accept only the scoped APDL action and reject mixed actions");
 
+// Plan B regression checks: runtime capability awareness, unified memory, side-question preservation,
+// unified lower-chord / lower-truss confirmation, polite read-only queries, and LLM-powered greeting.
+var beforeGreetingRequests = llm.DesignRequests.Count;
+var greetingReply = await SendAsync(vm, "你好");
+Require(llm.DesignRequests.Count == beforeGreetingRequests + 1 &&
+    llm.LastOptions?.ReplyOnlyMode == true &&
+    (llm.LastOptions?.RuntimeContextSummary?.Contains("本地 ANSYS APDL 启动器：已配置且本机可用") ?? false) &&
+    !string.IsNullOrWhiteSpace(greetingReply.Text),
+    "Greeting must call the LLM with live runtime capabilities instead of returning a hardcoded local template. " + greetingReply.Text);
+
+var knowledgeBeforeApdlQuestions = llm.KnowledgeRequests.Count;
+var launchesBeforeApdlQuestions = launcherStarts.Count;
+await SendAsync(vm, "仿真软件是什么呢？");
+var apdlQuestionOptions = llm.LastOptions ?? throw new InvalidOperationException("Missing LLM options for simulation question.");
+Require(llm.KnowledgeRequests.Count == knowledgeBeforeApdlQuestions &&
+    launcherStarts.Count == launchesBeforeApdlQuestions &&
+    apdlQuestionOptions.ReplyOnlyMode &&
+    !apdlQuestionOptions.AllowApdlLauncherAction &&
+    (apdlQuestionOptions.RuntimeContextSummary?.Contains("本地 ANSYS APDL 启动器：已配置且本机可用") ?? false) &&
+    !(apdlQuestionOptions.RuntimeContextSummary?.Contains(":\\") ?? false),
+    "Simulation question did not carry privacy-safe live APDL capability context.");
+
+var replyOnlyPrompt = (string)buildPrompt.Invoke(null, new object?[] { apdlQuestionOptions })!;
+Require(replyOnlyPrompt.Contains("本地 ANSYS APDL 启动器：已配置且本机可用") &&
+    replyOnlyPrompt.Contains("不要输出 JSON") &&
+    !replyOnlyPrompt.Contains("reaction-frame") &&
+    !replyOnlyPrompt.Contains("unless the program has explicitly connected a real solver"),
+    "Reply-only system prompt still contains stale contradictions or misses live runtime context.");
+
+var normalizeMethod = typeof(LlmService).GetMethod("NormalizeModelResponseWithDiagnostics",
+    BindingFlags.Instance | BindingFlags.NonPublic)!;
+var plainReplyJson = (string)normalizeMethod.Invoke(productionLlm,
+    new object?[] { "本程序已配置本地 ANSYS APDL 启动器，可以直接说打开 APDL。", "这里面不是有ansys apdl吗？", apdlQuestionOptions })!;
+var plainParsed = JsonSerializer.Deserialize<LlmParseResult>(plainReplyJson)!;
+Require(plainParsed.Actions.Count == 0 && plainParsed.Reply.Contains("已配置本地 ANSYS APDL 启动器"),
+    "Plain-text reply-only response was not wrapped cleanly.");
+
+var launchesBeforeDirectApdl = launcherStarts.Count;
+await SendAsync(vm, "打开apdl");
+Require(launcherStarts.Count == launchesBeforeDirectApdl + 1, "Direct '打开apdl' did not start launcher.");
+await SendAsync(vm, "刚才启动器打开了吗？");
+var historyAfterApdl = llm.DesignRequests.Last().History;
+Require(historyAfterApdl.Any(item => item.Role == "user" && item.Content == "打开apdl") &&
+    historyAfterApdl.Any(item => item.Role == "assistant" && item.Content.Contains("启动器已启动")) &&
+    (llm.LastOptions?.RuntimeContextSummary?.Contains("本会话 APDL 启动器记录：已启动") ?? false) &&
+    (llm.LastOptions?.RuntimeContextSummary?.Contains("open_apdl_launcher") ?? false),
+    "Direct '打开apdl' action was lost from unified conversation memory or runtime action audit.");
+
+// Ensure unified history remains completely compliant with KnowledgeDisclosureGuard.RejectKnowledgeOnLegacyPath.
+var rejectLegacy = typeof(KnowledgeDisclosureGuard).GetMethod("RejectKnowledgeOnLegacyPath",
+    BindingFlags.Static | BindingFlags.NonPublic)!;
+rejectLegacy.Invoke(null, new object?[] { historyAfterApdl, "刚才启动器打开了吗？" });
+
+// Polite editable-parameter query must NOT be blocked by '?' or '吗'.
+var politeQueryReply = await SendAsync(vm, "能帮我查一下可编辑参数吗？");
+Require(llm.LastOptions?.ReplyOnlyMode == false && politeQueryReply.Text.Contains("当前可编辑项"),
+    "Polite editable-parameter query was blocked by question guard. " + politeQueryReply.Text);
+
+// Lower chord & lower truss MUST now require explicit confirmation, and side questions must preserve the pending plan.
+var updatesBeforeLowerChord = cad.Updates.Count;
+var lowerChordPending = await SendAsync(vm, "把下弦杆截面改成 80x80x6");
+Require(lowerChordPending.Text.Contains("待确认修改") && cad.Updates.Count == updatesBeforeLowerChord,
+    "Lower chord edit bypassed confirmation gate. " + lowerChordPending.Text);
+
+await SendAsync(vm, "这里面不是有ansys apdl吗？");
+Require((llm.LastOptions?.RuntimeContextSummary?.Contains("当前有待确认的尺寸修改计划") ?? false) &&
+    cad.Updates.Count == updatesBeforeLowerChord,
+    "Side question wiped the pending lower-chord confirmation plan.");
+await SendAsync(vm, "取消");
+await SendAsync(vm, "确认修改");
+Require(cad.Updates.Count == updatesBeforeLowerChord, "Cancelled lower-chord edit still executed on confirmation.");
+
+var lowerTrussPending = await SendAsync(vm, "把下桁架改成 60x60x6");
+Require(lowerTrussPending.Text.Contains("待确认修改") && cad.Updates.Count == updatesBeforeLowerChord,
+    "Lower truss edit bypassed confirmation gate. " + lowerTrussPending.Text);
+await SendAsync(vm, "取消");
+
+var invalidLowerThickness = await SendAsync(vm, "把下弦杆壁厚改成 15");
+Require(invalidLowerThickness.Text.Contains("超出允许范围") && cad.Updates.Count == updatesBeforeLowerChord,
+    "Invalid lower-chord wall thickness was not rejected before confirmation. " + invalidLowerThickness.Text);
+
+Console.WriteLine("PASS Plan B runtime context injection, unified memory across APDL/CAD/RAG, polite parameter query, and unified lower-chord/lower-truss confirmation");
+
 if (args.Contains("--live-apdl", StringComparer.Ordinal))
 {
     Require(configuredLlmOptions.Mode == "Cloud" && configuredLlmOptions.Model == "gpt-6.1-sol",
@@ -395,6 +478,8 @@ sealed class FakeLlm : ILlmService
             ? """{"reply":"正在打开 ANSYS APDL。","actions":["open_apdl_launcher"],"commands":["open_apdl_launcher"],"parameters":[],"needConfirmation":false,"questions":[]}"""
             : userInput == "打开当前模型" && options?.ReplyOnlyMode != true
             ? """{"reply":"","actions":["open_working_model"],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}"""
+            : userInput == "能帮我查一下可编辑参数吗？" && options?.ReplyOnlyMode != true
+            ? """{"reply":"","actions":["query_editable_parameters"],"commands":["query_editable_parameters"],"parameters":[],"needConfirmation":false,"questions":[]}"""
             : """{"reply":"这是普通对话答复。","actions":[],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}""";
         return Task.FromResult(answer);
     }

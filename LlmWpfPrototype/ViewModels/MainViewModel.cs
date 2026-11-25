@@ -11,6 +11,7 @@ using System.Windows;
 using System.Windows.Threading;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Chat;
 using LlmWpfPrototype.Services.Simulation;
 
 namespace LlmWpfPrototype.ViewModels;
@@ -70,7 +71,7 @@ public sealed partial class MainViewModel : ObservableObject
     private const string StatusCompleted = "已完成";
     private const string StatusFailed = "失败";
     private const string LogCategoryAll = "全部";
-    private const int MaxConversationHistoryMessages = 6;
+    private const int MaxConversationHistoryMessages = ConversationMemoryStore.DefaultMaxMainMessages;
     private const int PendingModificationTimeoutMinutes = 5;
 
     private const string LogLevelAll = "全部";
@@ -117,7 +118,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly AsyncRelayCommand _testLlmConnectionCommand;
     private readonly LlmOptions _options;
     private readonly string _logFilePath = Path.Combine(AppPaths.LogsDirectory, "app.log");
-    private readonly List<ConversationMessage> _conversationHistory = [];
+    private readonly ConversationMemoryStore _memoryStore = new();
 
     private string _selectedLogLevel = LogLevelAll;
     private string _selectedLogAction = LogActionAll;
@@ -252,7 +253,8 @@ public sealed partial class MainViewModel : ObservableObject
         AppendLog("[VersionMarker] MainViewModel next-step guidance v5 loaded");
         AppendLog("[VersionMarker] LinkedRedTubeCompensation runtime v1 loaded");
         AppendLog("[VersionMarker] DeterministicLowerTrussGuard runtime v1 loaded");
-        AddAssistantMessage("您好，我是桥梁检查车智能设计助手。您可以让我进行 SolidWorks 模型操作、查询或修改已配置的结构参数，也可以咨询 APDL / ANSYS 分析准备相关内容。请输入您的需求，或输入‘你能做什么’查看功能说明。");
+        AppendLog("[VersionMarker] UnifiedChatOrchestrator runtime v2 loaded");
+        AddAssistantMessage(BuildWelcomeMessage());
     }
 
     public ObservableCollection<ChatMessage> ChatMessages { get; }
@@ -679,24 +681,11 @@ public sealed partial class MainViewModel : ObservableObject
             }
             else
             {
-                AddAssistantMessage("当前没有待确认的尺寸修改。请先提交需要修改的构件和目标尺寸。");
+                const string noPendingReply = "当前没有待确认的尺寸修改。请先提交需要修改的构件和目标尺寸。";
+                AddAssistantMessage(noPendingReply);
+                AppendConversationHistory(input, noPendingReply);
             }
             return;
-        }
-
-        if (_pendingBusinessPlan is not null)
-        {
-            ClearPendingBusinessPlan();
-            AppendLog("[Confirmation] DimensionPlanClearedByNewInput; Dispatched=False");
-            if (IsNegativeOrCancelModificationText(input))
-            {
-                const string cancellationReply = "已取消这项待确认的尺寸修改，未执行 CAD 写入。";
-                AddAssistantMessage(cancellationReply);
-                AppendConversationHistory(input, cancellationReply);
-                return;
-            }
-
-            AddAssistantMessage("上一项尺寸修改尚未确认，已撤销。需要执行时，请重新发送修改要求。");
         }
 
         ReplyOnlyIntentContext? replyOnlyIntent = null;
@@ -707,145 +696,85 @@ public sealed partial class MainViewModel : ObservableObject
             _lastDispatchSucceeded = false;
             _lastExecutableActionSucceeded = false;
             var normalizedInput = NormalizeIntentText(input);
+            var isNegativeOrCancel = IsNegativeActionIntent(input);
             var isQuestionOnlyInput = IsQuestionOnlyInput(input);
             var apdlLaunchCandidate = ApdlLaunchIntentPolicy.IsCandidate(input);
             AppendLog($"[APDL Intent] LlmClassificationCandidate={apdlLaunchCandidate}");
-            var hasExplicitModificationCommand = !isQuestionOnlyInput && HasExplicitModificationCommand(input, normalizedInput);
-            AppendOpenModelIntentDiagnostics(input, normalizedInput);
+            var hasExplicitModificationCommand = !isQuestionOnlyInput && !isNegativeOrCancel && HasExplicitModificationCommand(input, normalizedInput);
+            var isResetRequest = IsExplicitResetAndOpenRequest(input) ||
+                                 IsPossibleResetWorkspaceRequest(input) ||
+                                 (_pendingResetWorkspaceConfirmation && IsResetConfirmationCommand(input));
 
-            if (IsNegativeOrCancelModificationText(input))
+            if (_pendingBusinessPlan is not null)
+            {
+                if (isNegativeOrCancel)
+                {
+                    ClearPendingBusinessPlan();
+                    AppendLog("[Confirmation] DimensionPlanCancelledByUser; Dispatched=False");
+                    const string cancellationReply = "已取消这项待确认的尺寸修改，未执行 CAD 写入。";
+                    AddAssistantMessage(cancellationReply);
+                    AppendConversationHistory(input, cancellationReply);
+                    return;
+                }
+
+                if (!ChatTurnRouter.ShouldPreservePendingCadPlan(
+                        input,
+                        normalizedInput,
+                        isNegativeOrCancel,
+                        hasExplicitModificationCommand,
+                        isResetRequest))
+                {
+                    ClearPendingBusinessPlan();
+                    AppendLog("[Confirmation] DimensionPlanClearedByNewInput; Dispatched=False");
+                    AddAssistantMessage("上一项尺寸修改尚未确认，已撤销。需要执行时，请重新发送修改要求。");
+                }
+                else
+                {
+                    AppendLog("[Confirmation] PendingDimensionPlanPreservedDuringSideTurn=True");
+                }
+            }
+
+            AppendOpenModelIntentDiagnostics(input, normalizedInput);
+            AppendResetIntentDiagnostics(input);
+
+            if (isNegativeOrCancel)
             {
                 AppendLog($"[IntentGuard] NegativeOrCancelDetected=True InputCategory=negative_or_cancel InputLength={input.Length}");
                 AppendLog("[IntentGuard] BlockedModificationBecauseNegativeOrCancel=True");
-                AppendLog("[IntentGuard] ReplyTemplate=CancelModification");
                 ClearPendingModificationIntent();
-                if (!TryPrepareReplyOnlyLocalIntent(
-                        UserIntentKind.Unknown,
-                        "CancelModification",
-                        "明白，当前不会执行模型修改。我已取消这次未完成的修改意图。",
-                        out replyOnlyIntent))
-                {
-                    return;
-                }
             }
 
-            if (IsModificationStatusQueryText(input))
-            {
-                AppendLog("[IntentGuard] ModificationStatusQuery=True");
-                if (!TryPrepareReplyOnlyLocalIntent(
-                        UserIntentKind.Unknown,
-                        "ModificationStatusQuery",
-                        BuildModificationStatusReply(),
-                        out replyOnlyIntent))
-                {
-                    return;
-                }
-            }
-
-            if (IsModelStatusQuestion(input))
-            {
-                AppendLog("[IntentGuard] ModelStatusQuestion=True ForceQueryModelStatus=True");
-                AppendLog("[IntentGuard] LocalIntentDetected=True");
-                AppendLog("[IntentGuard] ReplyOnlyMode=True");
-                AppendLog("[IntentGuard] AllowLlmReply=True");
-                AppendLog("[IntentGuard] BlockedOpenWorkingModelBecauseQuestion=True");
-                AppendLog("[IntentGuard] SuppressActionExecution=True");
-                AppendLog("[IntentGuard] AllowedActionGeneration=False");
-                replyOnlyIntent ??= new ReplyOnlyIntentContext(
-                    UserIntentKind.Unknown,
-                    "ModelStatusQuestion",
-                    BuildModelStatusReply());
-            }
-
-            AppendResetIntentDiagnostics(input);
-
-            var classifiedIntent = ClassifyUserIntent(input);
-            if (!apdlLaunchCandidate &&
-                (classifiedIntent is UserIntentKind.Greeting or UserIntentKind.CapabilityQuestion or UserIntentKind.NextStepQuery))
-            {
-                AppendLog($"[Intent] {classifiedIntent}");
-                AppendLog("[IntentGuard] LocalIntentDetected=True");
-                AppendLog("[IntentGuard] ReplyOnlyMode=True");
-                AppendLog("[IntentGuard] AllowLlmReply=True");
-                AppendLog("[IntentGuard] SuppressActionExecution=True");
-                AppendLog("[IntentGuard] AllowedActionGeneration=False");
-                var localReply = BuildLocalIntentReply(classifiedIntent, input);
-                if (!TryPrepareReplyOnlyLocalIntent(
-                        classifiedIntent,
-                        classifiedIntent.ToString(),
-                        localReply,
-                        out replyOnlyIntent))
-                {
-                    return;
-                }
-            }
-
-            if (IsResetCapabilityQuestion(input))
-            {
-                AppendLog("[IntentGuard] ResetCapabilityQuestion=True");
-                AppendLog("[IntentGuard] ProvideResetUsagePrompt=True");
-                AppendLog("[IntentGuard] ActionExecutionBlockedBecauseQuestion=True");
-                AppendLog("[IntentGuard] LocalIntentDetected=True");
-                AppendLog("[IntentGuard] ReplyOnlyMode=True");
-                AppendLog("[IntentGuard] AllowLlmReply=True");
-                AppendLog("[IntentGuard] SuppressActionExecution=True");
-                AppendLog("[IntentGuard] AllowedActionGeneration=False");
-                replyOnlyIntent ??= new ReplyOnlyIntentContext(
-                    UserIntentKind.Unknown,
-                    "ResetCapabilityQuestion",
-                    BuildResetCapabilityReply());
-            }
-
-            if (IsExplicitResetAndOpenRequest(input))
+            if (!isNegativeOrCancel && IsExplicitResetAndOpenRequest(input))
             {
                 _pendingResetWorkspaceConfirmation = false;
                 AppendLog("[IntentGuard] ExplicitResetAndOpenRequest=True");
                 var resetParseResult = BuildResetAndOpenParseResult();
-                await HandleParsedResultAsync(resetParseResult, string.Empty, input);
+                await HandleParsedResultAsync(resetParseResult, string.Empty, input, isConfirmedCadPlan: true);
                 return;
             }
 
-            if (_pendingResetWorkspaceConfirmation && IsResetConfirmationCommand(input))
+            if (!isNegativeOrCancel && _pendingResetWorkspaceConfirmation && IsResetConfirmationCommand(input))
             {
                 _pendingResetWorkspaceConfirmation = false;
                 AppendLog("[IntentGuard] ExplicitResetAndOpenRequest=True");
                 var resetParseResult = BuildResetAndOpenParseResult();
-                await HandleParsedResultAsync(resetParseResult, string.Empty, input);
+                await HandleParsedResultAsync(resetParseResult, string.Empty, input, isConfirmedCadPlan: true);
                 return;
             }
 
-            if (IsPossibleResetWorkspaceRequest(input))
+            if (!isNegativeOrCancel && IsPossibleResetWorkspaceRequest(input))
             {
                 _pendingResetWorkspaceConfirmation = true;
                 AppendLog("[IntentGuard] PossibleResetWorkspaceRequest=True");
                 AppendLog("[IntentGuard] ResetWorkspaceRequiresConfirmation=True");
                 AppendLog("[PendingConfirmation] Created Action=reset_model_workspace_then_open");
-                if (!TryPrepareReplyOnlyLocalIntent(
-                        UserIntentKind.Unknown,
-                        "ResetWorkspaceConfirmationPrompt",
-                        "你是想打开一份全新的、未修改过的初始模型吗？如果是，请发送：确认重置并打开初始模型。",
-                        out replyOnlyIntent))
-                {
-                    return;
-                }
+                replyOnlyIntent = new ReplyOnlyIntentContext(
+                    UserIntentKind.Unknown,
+                    "ResetWorkspaceConfirmationPrompt",
+                    "你是想打开一份全新的、未修改过的初始模型吗？如果是，请发送：确认重置并打开初始模型。");
             }
 
-            if (TryBuildParameterSupplementConsultationReply(input, normalizedInput, out var consultationReply))
-            {
-                AppendLog("[IntentGuard] ParameterSupplementConsultation=True");
-                AppendLog("[IntentGuard] SkipPendingModification=True");
-                AppendLog("[IntentGuard] ActionExecutionBlockedBecauseConsultation=True");
-                if (!TryPrepareReplyOnlyLocalIntent(
-                        UserIntentKind.Unknown,
-                        "ParameterSupplementConsultation",
-                        consultationReply,
-                        out replyOnlyIntent))
-                {
-                    return;
-                }
-            }
-
-            var shouldBypassPendingForClarification = apdlLaunchCandidate || ShouldBypassPendingModificationForClarification(
+            var shouldBypassPendingForClarification = isNegativeOrCancel || apdlLaunchCandidate || ShouldBypassPendingModificationForClarification(
                     input,
                     normalizedInput,
                     hasExplicitModificationCommand);
@@ -859,105 +788,137 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            AppendLog($"[IntentGuard] QuestionOnlyInput={isQuestionOnlyInput}");
-            if (isQuestionOnlyInput && !apdlLaunchCandidate)
-            {
-                AppendLog("[IntentGuard] LocalHandled=False AllowLlmReply=True");
-                AppendLog("[IntentGuard] ReplyOnlyMode=True");
-                AppendLog("[IntentGuard] SuppressActionExecution=True");
-                AppendLog("[IntentGuard] AllowedActionGeneration=False");
-                replyOnlyIntent ??= new ReplyOnlyIntentContext(
-                    UserIntentKind.Unknown,
-                    "PureQuestion",
-                    BuildQuestionOnlySafetyReply(input));
-            }
+            var hasNormativeSignal = ChatTurnRouter.HasStrongNormativeEngineeringSignal(input);
+            var canTryDeterministicCadEdit = !isNegativeOrCancel && !isQuestionOnlyInput && !hasNormativeSignal;
 
             StatusMessage = "正在识别设计参数。";
             AppendLog("开始解析设计需求。");
             AppendLog($"[System] UserInput=<redacted> Length={input.Length}");
-            var deterministicRouteNormalized = NormalizeIntentText(input);
-            var inputContainsLowerTrussKeyword =
-                deterministicRouteNormalized.Contains("下桁架", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("下部桁架", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("下层桁架", StringComparison.OrdinalIgnoreCase);
-            var inputContainsLowerChordKeyword =
-                deterministicRouteNormalized.Contains("下弦杆", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("下弦", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("底弦", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("桁架下弦杆", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("下部弦杆", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("全部下弦杆", StringComparison.OrdinalIgnoreCase) ||
-                deterministicRouteNormalized.Contains("三根下弦杆", StringComparison.OrdinalIgnoreCase);
-            AppendLog("[DeterministicRouteProbe] Entered=True");
-            AppendLog($"[DeterministicRouteProbe] InputContainsLowerTrussKeyword={inputContainsLowerTrussKeyword}");
-            AppendLog($"[DeterministicRouteProbe] InputContainsLowerChordKeyword={inputContainsLowerChordKeyword}");
-            AppendLog("[DeterministicRouteProbe] TryLowerTrussBeforeLowerChord=True");
-            if (replyOnlyIntent is null &&
-                TryBuildDeterministicLowerTrussParseResult(input, out var lowerTrussParseResult))
+            if (canTryDeterministicCadEdit)
             {
-                if (TryGetMatchedLowerTrussKeyword(deterministicRouteNormalized, out var lowerTrussKeyword))
+                var deterministicRouteNormalized = NormalizeIntentText(input);
+                var inputContainsLowerTrussKeyword =
+                    deterministicRouteNormalized.Contains("下桁架", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("下部桁架", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("下层桁架", StringComparison.OrdinalIgnoreCase);
+                var inputContainsLowerChordKeyword =
+                    deterministicRouteNormalized.Contains("下弦杆", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("下弦", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("底弦", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("桁架下弦杆", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("下部弦杆", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("全部下弦杆", StringComparison.OrdinalIgnoreCase) ||
+                    deterministicRouteNormalized.Contains("三根下弦杆", StringComparison.OrdinalIgnoreCase);
+                AppendLog("[DeterministicRouteProbe] Entered=True");
+                AppendLog($"[DeterministicRouteProbe] InputContainsLowerTrussKeyword={inputContainsLowerTrussKeyword}");
+                AppendLog($"[DeterministicRouteProbe] InputContainsLowerChordKeyword={inputContainsLowerChordKeyword}");
+                AppendLog("[DeterministicRouteProbe] TryLowerTrussBeforeLowerChord=True");
+
+                if (TryBuildDeterministicLowerTrussParseResult(input, out var lowerTrussParseResult))
                 {
-                    AppendLog($"[DeterministicRouteProbe] LowerTrussMatchedKeyword={lowerTrussKeyword}");
+                    if (TryGetMatchedLowerTrussKeyword(deterministicRouteNormalized, out var lowerTrussKeyword))
+                    {
+                        AppendLog($"[DeterministicRouteProbe] LowerTrussMatchedKeyword={lowerTrussKeyword}");
+                    }
+
+                    AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=True");
+                    AppendLog("[Intent] DeterministicLowerTrussParse=True");
+                    AppendLog("[Intent] DeterministicLowerTrussLinkedUpdate=True");
+                    await RouteLocallyParsedChordEditAsync(lowerTrussParseResult, input);
+                    return;
                 }
 
-                AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=True");
-                AppendLog("[Intent] DeterministicLowerTrussParse=True");
-                AppendLog("[Intent] DeterministicLowerTrussLinkedUpdate=True");
-                await HandleParsedResultAsync(lowerTrussParseResult, string.Empty, input);
-                return;
+                AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=False");
+
+                if (TryBuildDeterministicLowerChordParseResult(input, out var lowerChordParseResult))
+                {
+                    AppendLog(IsDeterministicLowerTrussParse(lowerChordParseResult)
+                        ? "[Intent] DeterministicLowerTrussParse=True"
+                        : "[Intent] DeterministicLowerChordParse=True");
+                    await RouteLocallyParsedChordEditAsync(lowerChordParseResult, input);
+                    return;
+                }
+
+                var deterministicReply = string.Empty;
+                if (TryBuildDeterministicUpperChordParseResult(input, out var deterministicParseResult, out deterministicReply))
+                {
+                    AppendLog("[Intent] DeterministicUpperChordParse=True");
+                    await RouteLocallyParsedChordEditAsync(deterministicParseResult, input);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(deterministicReply))
+                {
+                    AppendLog("[Intent] DeterministicUpperChordParse=ClarificationRequired");
+                    AppendLog($"[AI Reply] {deterministicReply}");
+                    AddAssistantMessage(deterministicReply);
+                    AppendConversationHistory(input, deterministicReply);
+                    return;
+                }
             }
 
-            AppendLog("[DeterministicRouteProbe] TryLowerTrussResult=False");
+            var classifiedIntent = ClassifyUserIntent(input);
+            var isAppCapabilityOrStatusQuestion =
+                classifiedIntent is UserIntentKind.Greeting or UserIntentKind.CapabilityQuestion or UserIntentKind.NextStepQuery ||
+                IsModelStatusQuestion(input) ||
+                IsModificationStatusQueryText(input) ||
+                IsResetCapabilityQuestion(input) ||
+                IsOpenModelCapabilityQuestion(input, normalizedInput);
 
-            if (replyOnlyIntent is null &&
-                TryBuildDeterministicLowerChordParseResult(input, out var lowerChordParseResult))
-            {
-                AppendLog(IsDeterministicLowerTrussParse(lowerChordParseResult)
-                    ? "[Intent] DeterministicLowerTrussParse=True"
-                    : "[Intent] DeterministicLowerChordParse=True");
-                await HandleParsedResultAsync(lowerChordParseResult, string.Empty, input);
-                return;
-            }
-
-            var deterministicReply = string.Empty;
-            if (replyOnlyIntent is null &&
-                TryBuildDeterministicUpperChordParseResult(input, out var deterministicParseResult, out deterministicReply))
-            {
-                AppendLog("[Intent] DeterministicUpperChordParse=True");
-                await RouteLocallyParsedChordEditAsync(deterministicParseResult, input);
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(deterministicReply))
-            {
-                AppendLog("[Intent] DeterministicUpperChordParse=ClarificationRequired");
-                AppendLog($"[AI Reply] {deterministicReply}");
-                AddAssistantMessage(deterministicReply);
-                return;
-            }
-
-            if (ShouldUseKnowledgeChat(input, normalizedInput, classifiedIntent, replyOnlyIntent,
-                    hasExplicitModificationCommand))
+            if (replyOnlyIntent is null && ShouldUseKnowledgeChat(
+                    input,
+                    normalizedInput,
+                    isNegativeOrCancel,
+                    isAppCapabilityOrStatusQuestion,
+                    hasExplicitModificationCommand,
+                    apdlLaunchCandidate))
             {
                 AppendLog("[Intent] EngineeringQuestionRoutedTo=RAG");
                 await SendAutomaticChatMessageAsync(input);
                 return;
             }
 
+            replyOnlyIntent ??= BuildReplyOnlyIntentIfNeeded(
+                input,
+                normalizedInput,
+                isNegativeOrCancel,
+                isQuestionOnlyInput,
+                apdlLaunchCandidate,
+                hasExplicitModificationCommand,
+                classifiedIntent);
+
+            if (replyOnlyIntent is not null)
+            {
+                AppendLog($"[IntentGuard] ReplyOnlyMode=True IntentLabel={replyOnlyIntent.IntentLabel}");
+                AppendLog("[IntentGuard] SuppressActionExecution=True");
+                AppendLog("[IntentGuard] AllowedActionGeneration=False");
+            }
+
             AppendLog("[Intent] OrdinaryInputRoutedTo=LLM");
             AppendLog(BuildCurrentSessionStateLog(input));
 
-            AppendLog($"[ConversationHistory] BeforeRequest HistoryCount={_conversationHistory.Count}");
-            AppendLog($"[ConversationHistory] RequestMessages.Count={_conversationHistory.Count + 2}");
+            var mainHistory = _memoryStore.GetMainChatHistory();
+            var runtimeContextSummary = BuildRuntimeContextSnapshot().ToPromptBlock();
+            AppendLog($"[ConversationHistory] BeforeRequest HistoryCount={mainHistory.Count}");
+            AppendLog($"[ConversationHistory] RequestMessages.Count={mainHistory.Count + 2}");
             var requestOptions = apdlLaunchCandidate
                 ? new LlmChatRequestOptions(
                     ReplyOnlyMode: replyOnlyIntent is not null,
                     IntentLabel: replyOnlyIntent?.IntentLabel ?? "APDLLauncherIntent",
-                    AllowApdlLauncherAction: true)
+                    AllowApdlLauncherAction: true,
+                    RuntimeContextSummary: runtimeContextSummary)
                 : replyOnlyIntent is not null
-                    ? new LlmChatRequestOptions(ReplyOnlyMode: true, IntentLabel: replyOnlyIntent.IntentLabel)
-                    : null;
-            var json = await _llmService.ParseDesignRequirementAsync(input, _conversationHistory, requestOptions);
+                    ? new LlmChatRequestOptions(
+                        ReplyOnlyMode: true,
+                        IntentLabel: replyOnlyIntent.IntentLabel,
+                        AllowApdlLauncherAction: false,
+                        RuntimeContextSummary: runtimeContextSummary)
+                    : new LlmChatRequestOptions(
+                        ReplyOnlyMode: false,
+                        IntentLabel: null,
+                        AllowApdlLauncherAction: false,
+                        RuntimeContextSummary: runtimeContextSummary);
+            var json = await _llmService.ParseDesignRequirementAsync(input, mainHistory, requestOptions);
             JsonOutput = FormatJson(json);
             _llmRuntimeStatus = "在线";
             OnPropertyChanged(nameof(LlmConfigSummary));
@@ -987,7 +948,12 @@ public sealed partial class MainViewModel : ObservableObject
                 _llmRuntimeStatus = "异常";
                 OnPropertyChanged(nameof(LlmConfigSummary));
                 OnPropertyChanged(nameof(GptStatusSummary));
-                DesignStatus = StatusWaitingInput;
+                if (_pendingBusinessPlan is null)
+                {
+                    DesignStatus = StatusWaitingInput;
+                    Parameters.Clear();
+                    MissingItems.Clear();
+                }
                 StatusMessage = "LLM 回复解析失败，已使用本地安全说明。";
                 AppendLog($"[AI] 智能理解结果解析失败：{ex.Message}");
                 AppendLog($"[AI] RawResponsePreview={ex.RawResponsePreview}");
@@ -1001,8 +967,6 @@ public sealed partial class MainViewModel : ObservableObject
                 AppendLog($"[AI Reply] {fallbackReply}");
                 AddAssistantMessage(fallbackReply);
                 AppendConversationHistory(input, fallbackReply);
-                Parameters.Clear();
-                MissingItems.Clear();
                 RefreshSummaryProperties();
                 return;
             }
@@ -1010,13 +974,16 @@ public sealed partial class MainViewModel : ObservableObject
             _llmRuntimeStatus = "异常";
             OnPropertyChanged(nameof(LlmConfigSummary));
             OnPropertyChanged(nameof(GptStatusSummary));
-            DesignStatus = StatusFailed;
+            if (_pendingBusinessPlan is null)
+            {
+                DesignStatus = StatusFailed;
+                Parameters.Clear();
+                MissingItems.Clear();
+            }
             StatusMessage = "智能理解结果解析失败，请稍后重试或换一种说法。";
             AppendLog($"[AI] 智能理解结果解析失败：{ex.Message}");
             AppendLog($"[AI] RawResponsePreview={ex.RawResponsePreview}");
             AddAssistantMessage("智能理解结果解析失败，请稍后重试或换一种说法。");
-            Parameters.Clear();
-            MissingItems.Clear();
             RefreshSummaryProperties();
         }
         catch (Exception ex)
@@ -1026,7 +993,12 @@ public sealed partial class MainViewModel : ObservableObject
                 _llmRuntimeStatus = "异常";
                 OnPropertyChanged(nameof(LlmConfigSummary));
                 OnPropertyChanged(nameof(GptStatusSummary));
-                DesignStatus = StatusWaitingInput;
+                if (_pendingBusinessPlan is null)
+                {
+                    DesignStatus = StatusWaitingInput;
+                    Parameters.Clear();
+                    MissingItems.Clear();
+                }
                 StatusMessage = "LLM 调用失败，已使用本地安全说明。";
                 AppendLog($"[AI] LLM 处理失败：{ex.Message}", ex, "MainViewModel");
                 AppendLog("[IntentGuard] FallbackLocalReply=True");
@@ -1039,8 +1011,6 @@ public sealed partial class MainViewModel : ObservableObject
                 AppendLog($"[AI Reply] {fallbackReply}");
                 AddAssistantMessage(fallbackReply);
                 AppendConversationHistory(input, fallbackReply);
-                Parameters.Clear();
-                MissingItems.Clear();
                 RefreshSummaryProperties();
                 return;
             }
@@ -1048,13 +1018,15 @@ public sealed partial class MainViewModel : ObservableObject
             _llmRuntimeStatus = "异常";
             OnPropertyChanged(nameof(LlmConfigSummary));
             OnPropertyChanged(nameof(GptStatusSummary));
-            DesignStatus = StatusFailed;
+            if (_pendingBusinessPlan is null)
+            {
+                DesignStatus = StatusFailed;
+                Parameters.Clear();
+                MissingItems.Clear();
+            }
             StatusMessage = "智能理解服务调用失败，请检查网络、API Key 或模型配置。";
             AppendLog($"[AI] LLM 处理失败：{ex.Message}", ex, "MainViewModel");
             AddAssistantMessage("智能理解服务调用失败，请检查网络、API Key 或模型配置。");
-
-            Parameters.Clear();
-            MissingItems.Clear();
             RefreshSummaryProperties();
         }
     }
@@ -1187,7 +1159,8 @@ public sealed partial class MainViewModel : ObservableObject
         LlmParseResult parseResult,
         string rawResponse,
         string userInput,
-        ReplyOnlyIntentContext? replyOnlyIntent = null)
+        ReplyOnlyIntentContext? replyOnlyIntent = null,
+        bool isConfirmedCadPlan = false)
     {
         if (replyOnlyIntent is not null)
         {
@@ -1210,7 +1183,19 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        BindParameters(parseResult);
+        if (await TryHandleSimulationActionFromLlmAsync(parseResult, userInput))
+        {
+            return;
+        }
+
+        var preservePendingCadBindings = _pendingBusinessPlan is not null &&
+                                         !isConfirmedCadPlan &&
+                                         !HasDispatchCommands(parseResult) &&
+                                         parseResult.Parameters.Count == 0;
+        if (!preservePendingCadBindings)
+        {
+            BindParameters(parseResult);
+        }
 
         var llmReply = ResolveAssistantReply(parseResult, rawResponse);
         if (replyOnlyIntent is not null)
@@ -1326,6 +1311,34 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        // Unified CAD modification confirmation gate: every SolidWorks dimension write requires explicit confirmation.
+        if (!isConfirmedCadPlan &&
+            parseResult.Actions.Any(action => string.Equals(action, "update_solidworks_dimensions", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (_pendingBusinessPlan is not null)
+            {
+                ClearPendingBusinessPlan();
+            }
+
+            parseResult.NeedConfirmation = true;
+            BindParameters(parseResult);
+            QueueBusinessPlanForConfirmation(parseResult, userInput);
+            return;
+        }
+
+        // Unified workspace reset confirmation gate.
+        if (!isConfirmedCadPlan &&
+            parseResult.Actions.Any(action => string.Equals(action, "reset_model_workspace", StringComparison.OrdinalIgnoreCase)) &&
+            !IsExplicitResetAndOpenRequest(userInput))
+        {
+            _pendingResetWorkspaceConfirmation = true;
+            const string resetConfirmReply = "重置工作区会恢复到未修改的初始模型。如果确认执行，请发送：确认重置并打开初始模型。";
+            AppendLog("[IntentGuard] ResetWorkspaceRequiresConfirmation=True");
+            AddAssistantMessage(resetConfirmReply);
+            AppendConversationHistory(userInput, resetConfirmReply);
+            return;
+        }
+
         var dispatchResult = await TryDispatchCommandsAsync(parseResult);
         _lastDispatchHandled = dispatchResult.Handled;
         _lastDispatchSuppressDefaultReply = dispatchResult.SuppressDefaultReply;
@@ -1354,7 +1367,20 @@ public sealed partial class MainViewModel : ObservableObject
             AppendLog($"[AI Reply] {finalReply}");
             AddAssistantMessage(finalReply);
             AppendLog("[System] 最终回复如下：");
-            AppendConversationHistory(userInput, finalReply);
+            if (dispatchResult.Handled)
+            {
+                _memoryStore.RecordActionTurn(
+                    userInput,
+                    finalReply,
+                    BuildDispatchActionAuditName(parseResult),
+                    BuildDispatchActionAuditSummary(parseResult, dispatchResult),
+                    dispatchResult.Succeeded,
+                    ConversationTurnKind.CadAction);
+            }
+            else
+            {
+                AppendConversationHistory(userInput, finalReply);
+            }
         }
 
         if (!dispatchResult.Handled)
@@ -1368,7 +1394,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (dispatchResult.SuppressDefaultReply && DesignStatus == StatusPendingConfirmation)
         {
             AppendLog("[Dispatch] 本轮命令已由 CommandDispatcher 真实处理，重置 PendingConfirmation 状态。");
-            DesignStatus = StatusCompleted;
+            DesignStatus = dispatchResult.Succeeded ? StatusCompleted : StatusFailed;
             StatusMessage = dispatchResult.Succeeded ? "模型修改已完成。" : "模型修改执行失败。";
             RefreshSummaryProperties();
             RefreshActionState();
@@ -1421,13 +1447,7 @@ public sealed partial class MainViewModel : ObservableObject
         else
         {
             AppendLog("[APDL Intent] StructuredActionAccepted=True");
-            var messageCount = ChatMessages.Count;
             await HandleSimulationChatAsync(userInput, launcherSelectedByLlm: true);
-            var assistantReply = ChatMessages.Skip(messageCount).LastOrDefault(message => !message.IsUser)?.Text;
-            if (!string.IsNullOrWhiteSpace(assistantReply))
-            {
-                AppendConversationHistory(userInput, assistantReply);
-            }
             return;
         }
 
@@ -1507,81 +1527,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void AppendConversationHistory(string userInput, string assistantReply)
     {
-        if (!string.IsNullOrWhiteSpace(userInput))
-        {
-            _conversationHistory.Add(new ConversationMessage
-            {
-                Role = "user",
-                Content = userInput.Trim(),
-                CreatedAt = DateTime.Now
-            });
-        }
-
-        if (!string.IsNullOrWhiteSpace(assistantReply))
-        {
-            _conversationHistory.Add(new ConversationMessage
-            {
-                Role = "assistant",
-                Content = assistantReply.Trim(),
-                CreatedAt = DateTime.Now
-            });
-        }
-
+        _memoryStore.RecordChatTurn(userInput, assistantReply);
         AppendLog("[ConversationHistory] Appended UserAndAssistant=True");
-        TrimConversationHistory();
-    }
-
-    private bool TryPrepareReplyOnlyLocalIntent(
-        UserIntentKind intent,
-        string intentLabel,
-        string fallbackReply,
-        out ReplyOnlyIntentContext? replyOnlyIntent)
-    {
-        AppendLog($"[IntentGuard] AlwaysUseLlmForLocalReplies={_options.AlwaysUseLlmForLocalReplies}");
-        if (!_options.AlwaysUseLlmForLocalReplies)
-        {
-            AppendLog("[IntentGuard] LocalHandled=True");
-            AppendLog("[IntentGuard] SkipLlm=True");
-            AppendLog("[IntentGuard] LocalReplyMode=Template");
-            AppendLog("[IntentGuard] LlmLocalReplyFallback=False");
-            AppendLog($"[AI Reply] {fallbackReply}");
-            AddAssistantMessage(fallbackReply);
-            AppendConversationHistory(_lastSubmittedInput, fallbackReply);
-            replyOnlyIntent = null;
-            return false;
-        }
-
-        AppendLog("[IntentGuard] LocalHandled=True");
-        AppendLog("[IntentGuard] SkipLlm=False");
-        AppendLog("[IntentGuard] LocalReplyMode=LlmReplyOnly");
-        AppendLog("[IntentGuard] LlmLocalReplyFallback=False");
-        AppendLog("[IntentGuard] SuppressActionExecution=True");
-        AppendLog("[IntentGuard] AllowedActionGeneration=False");
-        AppendLog("[IntentGuard] ReplyOnlyMode=True");
-        AppendLog("[IntentGuard] LocalTemplateRetained=True");
-        AppendLog($"[IntentGuard] LocalTemplatePreview={TruncateForLog(fallbackReply)}");
-        AppendLog("[IntentGuard] ContinueToLlmForNaturalReply=True");
-        replyOnlyIntent = new ReplyOnlyIntentContext(intent, intentLabel, fallbackReply);
-        return true;
-    }
-
-    private void TrimConversationHistory()
-    {
-        var oldCount = _conversationHistory.Count;
-        if (oldCount <= MaxConversationHistoryMessages)
-        {
-            return;
-        }
-
-        var removeCount = oldCount - MaxConversationHistoryMessages;
-        _conversationHistory.RemoveRange(0, removeCount);
-        AppendLog($"[ConversationHistory] Trimmed OldCount={oldCount} NewCount={_conversationHistory.Count}");
     }
 
     private void ClearConversationHistory(string reason)
     {
-        _conversationHistory.Clear();
-        _knowledgeConversationHistory.Clear();
+        _memoryStore.Clear();
         _chatRetrievalTopic = null;
         AppendLog($"[ConversationHistory] Cleared Reason={reason}");
     }
@@ -1601,14 +1553,12 @@ public sealed partial class MainViewModel : ObservableObject
         if (actions.Any(action => string.Equals(action, "open_working_model", StringComparison.OrdinalIgnoreCase)))
         {
             ClearPendingModificationContext("open_working_model");
-            ClearConversationHistory("open_working_model");
             return;
         }
 
         if (actions.Any(action => string.Equals(action, "reset_model_workspace", StringComparison.OrdinalIgnoreCase)))
         {
             ClearPendingModificationContext("reset_model_workspace");
-            ClearConversationHistory("reset_model_workspace");
         }
     }
 
@@ -2414,16 +2364,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     private Task RouteLocallyParsedChordEditAsync(LlmParseResult plan, string input)
     {
-        if (!plan.Parameters.Any(parameter => parameter.Name.StartsWith("truss_top_chord_", StringComparison.Ordinal)))
-        {
-            return HandleParsedResultAsync(plan, string.Empty, input);
-        }
-
         if (TryBuildDeterministicValidationReply(plan, out var validationReply))
         {
             AddAssistantMessage(validationReply);
             AppendConversationHistory(input, validationReply);
             return Task.CompletedTask;
+        }
+
+        if (_pendingBusinessPlan is not null)
+        {
+            ClearPendingBusinessPlan();
         }
 
         plan.NeedConfirmation = true;
@@ -3255,25 +3205,35 @@ public sealed partial class MainViewModel : ObservableObject
     private static bool TryBuildDeterministicValidationReply(LlmParseResult parseResult, out string reply)
     {
         reply = string.Empty;
-        var width = TryGetDeterministicParameterValue(parseResult, "truss_top_chord_section_width");
-        var height = TryGetDeterministicParameterValue(parseResult, "truss_top_chord_section_height");
-        var thickness = TryGetDeterministicParameterValue(parseResult, "truss_top_chord_wall_thickness");
-        if (!thickness.HasValue)
+        var groups = new (string WidthName, string HeightName, string ThicknessName, decimal MaxThickness)[]
         {
-            return false;
-        }
+            ("truss_top_chord_section_width", "truss_top_chord_section_height", "truss_top_chord_wall_thickness", 12m),
+            ("truss_bottom_chord_section_width", "truss_bottom_chord_section_height", "truss_bottom_chord_wall_thickness", 12m),
+            ("lower_truss_section_width", "lower_truss_section_height", "lower_truss_wall_thickness", 20m)
+        };
 
-        if (thickness > 12m)
+        foreach (var group in groups)
         {
-            reply = "壁厚数值过大，已取消修改。请确认截面尺寸和壁厚。";
-            return true;
-        }
+            var width = TryGetDeterministicParameterValue(parseResult, group.WidthName);
+            var height = TryGetDeterministicParameterValue(parseResult, group.HeightName);
+            var thickness = TryGetDeterministicParameterValue(parseResult, group.ThicknessName);
+            if (!thickness.HasValue)
+            {
+                continue;
+            }
 
-        if ((width.HasValue && width.Value - (2m * thickness.Value) <= 0m) ||
-            (height.HasValue && height.Value - (2m * thickness.Value) <= 0m))
-        {
-            reply = "壁厚数值过大，已取消修改。请确认截面尺寸和壁厚。";
-            return true;
+            if (thickness.Value <= 0m || thickness.Value > group.MaxThickness)
+            {
+                reply = "壁厚数值超出允许范围，已取消修改。请确认截面尺寸和壁厚。";
+                return true;
+            }
+
+            if ((width.HasValue && width.Value - (2m * thickness.Value) <= 0m) ||
+                (height.HasValue && height.Value - (2m * thickness.Value) <= 0m))
+            {
+                reply = "壁厚数值过大（已不小于截面宽度或高度的一半），已取消修改。请确认截面尺寸和壁厚。";
+                return true;
+            }
         }
 
         return false;
@@ -4088,7 +4048,11 @@ public sealed partial class MainViewModel : ObservableObject
                             (!string.IsNullOrWhiteSpace(_workspaceManager.CurrentAssemblyPath) &&
                              _workspaceManager.IsWorkspaceInitialized);
 
-        return $"[Session] 当前状态：WorkspaceLoaded={_workspaceManager.IsWorkspaceInitialized}, IsModelOpened={isModelOpened}, ActiveDocumentName={FormatSessionLogValue(activeDocumentName)}, WorkingModelPath={FormatSessionLogValue(_workspaceManager.WorkingModelPath)}, CurrentAssemblyPath={FormatSessionLogValue(_workspaceManager.CurrentAssemblyPath)}, LastOpenedModelPath={FormatSessionLogValue(_workspaceManager.LastOpenedModelPath)}, LastOpenedDocument={FormatSessionLogValue(_workspaceManager.LastOpenedDocumentPath)}, CurrentInput={FormatSessionLogValue(currentInput)}, LastAction=n/a, LastActionSuccess=n/a";
+        var lastAction = _memoryStore.LastAction;
+        var lastActionName = lastAction is null ? "n/a" : lastAction.ActionName;
+        var lastActionSuccess = lastAction is null ? "n/a" : lastAction.Succeeded.ToString();
+
+        return $"[Session] 当前状态：WorkspaceLoaded={_workspaceManager.IsWorkspaceInitialized}, IsModelOpened={isModelOpened}, ActiveDocumentName={FormatSessionLogValue(activeDocumentName)}, WorkingModelPath={FormatSessionLogValue(_workspaceManager.WorkingModelPath)}, CurrentAssemblyPath={FormatSessionLogValue(_workspaceManager.CurrentAssemblyPath)}, LastOpenedModelPath={FormatSessionLogValue(_workspaceManager.LastOpenedModelPath)}, LastOpenedDocument={FormatSessionLogValue(_workspaceManager.LastOpenedDocumentPath)}, CurrentInput={FormatSessionLogValue(currentInput)}, LastAction={lastActionName}, LastActionSuccess={lastActionSuccess}";
     }
 
     private static string FormatSessionLogValue(string? value)
@@ -4825,12 +4789,35 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static bool ShouldBlockDispatchBecauseQuestion(string userInput, LlmParseResult parseResult)
     {
-        if (!HasDispatchCommands(parseResult) || !IsQuestionOnlyInput(userInput))
+        if (!HasDispatchCommands(parseResult))
+        {
+            return false;
+        }
+
+        if (IsNegativeActionIntent(userInput))
+        {
+            return true;
+        }
+
+        if (!IsQuestionOnlyInput(userInput))
         {
             return false;
         }
 
         var normalized = NormalizeIntentText(userInput);
+        var actions = (parseResult.Actions ?? [])
+            .Where(action => !string.IsNullOrWhiteSpace(action))
+            .Select(action => action.Trim())
+            .ToArray();
+
+        // Read-only parameter/baseline queries are safe even when phrased politely with '?' or '吗'.
+        if (actions.Length > 0 && actions.All(action =>
+                string.Equals(action, "query_editable_parameters", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(action, "read_lightweight_baseline", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
         if (HasExplicitModificationCommand(userInput, normalized))
         {
             return false;

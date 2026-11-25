@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Chat;
 using LlmWpfPrototype.Services.Simulation;
 
 namespace LlmWpfPrototype.ViewModels;
@@ -31,14 +32,56 @@ public sealed partial class MainViewModel
     private static bool IsSimulationEntryInput(string text) =>
         IsSimulationChatCommand(text) || ApdlLaunchIntentPolicy.IsCandidate(text);
 
-    private async Task HandleSimulationChatAsync(string input, bool launcherSelectedByLlm = false)
+    private bool IsConfiguredAnsysLauncherAvailable()
     {
-        var command = ParseSimulationCommand(input);
+        var path = _simulationOptions.LauncherPath;
+        return Path.IsPathFullyQualified(path) &&
+               File.Exists(path) &&
+               string.Equals(Path.GetFileName(path), "launcher.exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsConfiguredAnsysSolverAvailable()
+    {
+        var path = _simulationOptions.SolverPath;
+        return Path.IsPathFullyQualified(path) && File.Exists(path);
+    }
+
+    private bool IsConfiguredLightweightStudyAvailable()
+    {
+        if (string.IsNullOrWhiteSpace(_simulationOptions.StudyFile))
+        {
+            return false;
+        }
+
+        try
+        {
+            var studyFile = Path.GetFullPath(_simulationOptions.StudyFile, AppPaths.BundledConfigDirectory);
+            return File.Exists(studyFile);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task HandleSimulationChatAsync(
+        string input,
+        bool launcherSelectedByLlm = false,
+        SimulationCommand? explicitCommand = null)
+    {
+        var command = explicitCommand ?? ParseSimulationCommand(input);
         try
         {
             if (command == SimulationCommand.OpenAnsys || launcherSelectedByLlm)
             {
-                StartConfiguredAnsysLauncher();
+                var started = StartConfiguredAnsysLauncher(out var launcherReply);
+                _memoryStore.RecordActionTurn(
+                    input,
+                    launcherReply,
+                    "open_apdl_launcher",
+                    started ? "启动本地 ANSYS APDL 启动器" : "未找到配置的 ANSYS 启动器",
+                    started,
+                    ConversationTurnKind.SimulationAction);
                 return;
             }
 
@@ -47,20 +90,44 @@ public sealed partial class MainViewModel
                 case SimulationCommand.ReadBaseline:
                     if (!_workspaceManager.HasOpenedWorkingModel || _solidWorksService is not SolidWorksService cad)
                     {
-                        AddAssistantMessage("轻量化对比参考尺寸为 70×70×5 mm（用户提供）。要读取实际尺寸，请先在程序中打开工作模型，再发送“读取轻量化基线”。");
+                        const string referenceReply = "轻量化对比参考尺寸为 70×70×5 mm（用户提供）。要读取实际尺寸，请先在程序中打开工作模型，再发送“读取轻量化基线”。";
+                        AddAssistantMessage(referenceReply);
+                        _memoryStore.RecordActionTurn(
+                            input,
+                            referenceReply,
+                            "read_lightweight_baseline",
+                            "当前未打开工作模型，返回轻量化参考尺寸提示",
+                            succeeded: false,
+                            ConversationTurnKind.SimulationAction);
                         return;
                     }
 
                     var baseline = await cad.ReadConfiguredLightweightBaselineAsync(
                         _workspaceManager.GetWorkingAssemblyPath(), _editableTrussMemberCatalogService.GetEnabledMembers().ToArray(),
                         message => AppendLog(message));
-                    AddAssistantMessage(FormatLightweightBaseline(baseline));
+                    var baselineReply = FormatLightweightBaseline(baseline);
+                    AddAssistantMessage(baselineReply);
+                    _memoryStore.RecordActionTurn(
+                        input,
+                        baselineReply,
+                        "read_lightweight_baseline",
+                        baseline.AssemblyVerified ? "已读取工作模型轻量化基线尺寸" : "轻量化基线读取未通过完整校验",
+                        baseline.AssemblyVerified,
+                        ConversationTurnKind.SimulationAction);
                     return;
 
                 case SimulationCommand.RunStudy:
                     if (string.IsNullOrWhiteSpace(_simulationOptions.StudyFile))
                     {
-                        AddAssistantMessage("当前还没有配置这辆检查车的 APDL 算例。请先配置分析输入、材料、载荷、支承、对比尺寸和校核限值。现有的 APDL 调试模板不包含完整工况。");
+                        const string unconfiguredReply = "当前还没有配置这辆检查车的 APDL 算例。请先配置分析输入、材料、载荷、支承、对比尺寸和校核限值。现有的 APDL 调试模板不包含完整工况。";
+                        AddAssistantMessage(unconfiguredReply);
+                        _memoryStore.RecordActionTurn(
+                            input,
+                            unconfiguredReply,
+                            "run_lightweight_study",
+                            "未配置轻量化 APDL 算例文件，未启动求解",
+                            succeeded: false,
+                            ConversationTurnKind.SimulationAction);
                         return;
                     }
 
@@ -70,7 +137,16 @@ public sealed partial class MainViewModel
                     AddAssistantMessage("正在按算例中的截面和工况进行比较。每组求解都有独立的输入、日志和结果。");
                     var study = await LightweightStudy.RunAsync(studyFile, _simulationOptions.SolverPath, runRoot,
                         [AppPaths.ProjectRoot, _workspaceManager.InitialModelFolder, _workspaceManager.WorkingModelFolder]);
-                    AddAssistantMessage(study.ToDisplayText());
+                    var studyReply = study.ToDisplayText();
+                    AddAssistantMessage(studyReply);
+                    var studySucceeded = string.IsNullOrWhiteSpace(study.Error) && study.Cases.Count > 0;
+                    _memoryStore.RecordActionTurn(
+                        input,
+                        studyReply,
+                        "run_lightweight_study",
+                        studySucceeded ? $"完成轻量化仿真比较（{study.Cases.Count} 组算例）" : "轻量化仿真未完全成功",
+                        studySucceeded,
+                        ConversationTurnKind.SimulationAction);
                     return;
             }
         }
@@ -78,24 +154,34 @@ public sealed partial class MainViewModel
             or UnauthorizedAccessException or ArgumentException)
         {
             AppendLog($"[APDL] {command} Failed: {exception.Message}");
-            AddAssistantMessage($"操作未完成。{exception.Message}");
+            var failureReply = $"操作未完成。{exception.Message}";
+            AddAssistantMessage(failureReply);
+            _memoryStore.RecordActionTurn(
+                input,
+                failureReply,
+                command.ToString(),
+                $"仿真操作失败：{exception.Message}",
+                succeeded: false,
+                ConversationTurnKind.SimulationAction);
         }
     }
 
-    private void StartConfiguredAnsysLauncher()
+    private bool StartConfiguredAnsysLauncher(out string assistantReply)
     {
         var path = _simulationOptions.LauncherPath;
-        if (!Path.IsPathFullyQualified(path) || !File.Exists(path) ||
-            !string.Equals(Path.GetFileName(path), "launcher.exe", StringComparison.OrdinalIgnoreCase))
+        if (!IsConfiguredAnsysLauncherAvailable())
         {
             AppendLog("[APDL] LauncherValidationFailed=True");
-            AddAssistantMessage("未找到 ANSYS 启动器。请检查程序配置中的 Simulation.LauncherPath。");
-            return;
+            assistantReply = "未找到 ANSYS 启动器。请检查程序配置中的 Simulation.LauncherPath。";
+            AddAssistantMessage(assistantReply);
+            return false;
         }
 
         _startAnsysLauncher(path);
-        AddAssistantMessage("ANSYS APDL 启动器已启动。你可以在启动器中选择运行方式。");
+        assistantReply = "ANSYS APDL 启动器已启动。你可以在启动器中选择运行方式。";
+        AddAssistantMessage(assistantReply);
         AppendLog("[APDL] LauncherProcessStarted=True");
+        return true;
     }
 
     private static string FormatLightweightBaseline(LightweightBaselineResult baseline)

@@ -13,8 +13,13 @@ public sealed partial class SolidWorksService
     private bool _isolatedAttachAttempted;
     public string LastDimensionOperationMessage { get; private set; } = string.Empty;
     private AssemblyComponentIndex? _assemblyComponentIndex;
-    private sealed record AssemblyComponentIndex(string AssemblyPath, string Configuration,
-        Dictionary<string, List<IComponent2>> ByPath, int Count);
+    private sealed record ResolvedComponentEntry(IModelDoc2 Document, string Configuration, string Instances);
+    private sealed record AssemblyComponentIndex(
+        string AssemblyPath,
+        string Configuration,
+        Dictionary<string, List<IComponent2>> ByPath,
+        Dictionary<string, ResolvedComponentEntry> ResolvedByPath,
+        int Count);
 
     // No creation, Visible/UserControl setters, UI automation or fallback to another instance.
     private bool TryGetIsolatedApplication(Action<string>? log, out SldWorks? application)
@@ -230,6 +235,8 @@ public sealed partial class SolidWorksService
 
     private IModelDoc2 RequireActiveWorkingAssembly(string? expectedPath = null)
     {
+        if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)))
+            TryGetRunningApplication(out _);
         var document = _swApp?.ActiveDoc as IModelDoc2;
         if (document is not IAssemblyDoc)
             throw new InvalidOperationException("当前 SolidWorks 会话没有活动的工作总装配，请先切回工作总装配。");
@@ -241,6 +248,105 @@ public sealed partial class SolidWorksService
             throw new InvalidOperationException("当前活动装配已变化或不属于工作副本，已停止尺寸修改。");
         WorkspaceSafetyPolicy.RejectLinks(path);
         return document;
+    }
+
+    private static bool IsApplicationAlive(SldWorks application)
+    {
+        try
+        {
+            _ = application.GetProcessID();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal IDisposable SuspendFeatureTreeUpdates(IModelDoc2? document)
+        => new FeatureTreeUpdateScope(document);
+
+    private sealed class FeatureTreeUpdateScope : IDisposable
+    {
+        private readonly IFeatureManager? _featureManager;
+        private readonly bool _restore;
+        private readonly bool _previousTree;
+        private readonly bool _previousWindow;
+        private bool _disposed;
+
+        public FeatureTreeUpdateScope(IModelDoc2? document)
+        {
+            try
+            {
+                _featureManager = document?.FeatureManager;
+                if (_featureManager is null)
+                    return;
+                _previousTree = _featureManager.EnableFeatureTree;
+                _previousWindow = _featureManager.EnableFeatureTreeWindow;
+                _featureManager.EnableFeatureTree = false;
+                _featureManager.EnableFeatureTreeWindow = false;
+                _restore = true;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                _restore = false;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            if (!_restore || _featureManager is null)
+                return;
+            try
+            {
+                _featureManager.EnableFeatureTree = _previousTree;
+                _featureManager.EnableFeatureTreeWindow = _previousWindow;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+            }
+        }
+    }
+
+    internal bool TryGetLoadedAssemblyComponentModel(
+        string partFilePath,
+        Action<string>? log,
+        CancellationToken cancellationToken,
+        out IModelDoc2? document)
+    {
+        document = null;
+        try
+        {
+            if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)))
+                TryGetRunningApplication(out _);
+            if (_swApp?.ActiveDoc is not IModelDoc2 activeDoc || activeDoc is not IAssemblyDoc)
+                return false;
+            var activePath = activeDoc.GetPathName();
+            if (string.IsNullOrWhiteSpace(_workingModelFolder) ||
+                string.IsNullOrWhiteSpace(activePath) ||
+                !WorkspaceSafetyPolicy.Within(activePath, _workingModelFolder) ||
+                (!string.IsNullOrWhiteSpace(_initialModelFolder) && WorkspaceSafetyPolicy.Within(activePath, _initialModelFolder)))
+                return false;
+            if (!WorkspaceSafetyPolicy.Within(partFilePath, _workingModelFolder) ||
+                (!string.IsNullOrWhiteSpace(_initialModelFolder) && WorkspaceSafetyPolicy.Within(partFilePath, _initialModelFolder)))
+                return false;
+
+            var loaded = RequireLoadedComponent(activeDoc, partFilePath, log, cancellationToken);
+            document = loaded.Document;
+            return document is not null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            document = null;
+            return false;
+        }
     }
 
     private bool TryUpdateAssemblyComponents(
@@ -301,6 +407,7 @@ public sealed partial class SolidWorksService
                     () =>
                     {
                         var active = RequireActiveWorkingAssembly(assemblyPath);
+                        using var _ = SuspendFeatureTreeUpdates(active);
                         WriteLog(log, $"正在重建工作零件：{Path.GetFileName(group.Key)}");
                         if (!group.First().Model.ForceRebuild3(false)) return false;
                         if (index != groups.Count - 1) return true;
@@ -350,6 +457,36 @@ public sealed partial class SolidWorksService
         return matched;
     }
 
+    private static (Dictionary<string, List<IComponent2>> ByPath, int Count) ScanAssemblyComponentsByPath(
+        IModelDoc2 assembly,
+        CancellationToken cancellationToken)
+    {
+        var byPath = new Dictionary<string, List<IComponent2>>(StringComparer.OrdinalIgnoreCase);
+        var components = ((IAssemblyDoc)assembly).GetComponents(false) as object[]
+            ?? throw new InvalidOperationException("装配组件清单未知，禁止继续修改。");
+        foreach (var value in components)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (value is not IComponent2 candidate)
+                throw new InvalidOperationException("装配组件身份未知，禁止继续修改。");
+            var raw = candidate.GetPathName();
+            if (!Path.IsPathFullyQualified(raw))
+                continue;
+            var candidatePath = NormalizeFilePath(raw);
+            if (!byPath.TryGetValue(candidatePath, out var matches))
+                byPath[candidatePath] = matches = [];
+            matches.Add(candidate);
+        }
+
+        return (byPath, components.Length);
+    }
+
+    // IMPORTANT: Project compiles against SolidWorks 2022 Interop (30.5.1), while runtime may be
+    // SolidWorks 2018 (v26, 165 vtable slots on IComponent2). Never call GetSuppression2() (vtable[165]),
+    // which jumps past SW2018's vtable and throws AccessViolationException. GetSuppression() is vtable[33].
+    private static swComponentSuppressionState_e GetComponentSuppressionState(IComponent2 component)
+        => (swComponentSuppressionState_e)component.GetSuppression();
+
     private (IModelDoc2 Document, string Configuration, string Instances) RequireLoadedComponent(
         IModelDoc2 assembly, string path, Action<string>? log, CancellationToken cancellationToken)
     {
@@ -362,60 +499,85 @@ public sealed partial class SolidWorksService
             (!string.Equals(existing.AssemblyPath, assemblyPath, StringComparison.OrdinalIgnoreCase) ||
              !string.Equals(existing.Configuration, assemblyConfiguration, StringComparison.Ordinal)))
             throw new InvalidOperationException("修改过程中活动总装配或配置已切换。");
+
+        if (_assemblyComponentIndex is not null &&
+            _assemblyComponentIndex.ResolvedByPath.TryGetValue(normalizedPath, out var cached))
+        {
+            try
+            {
+                var livePath = NormalizeFilePath(cached.Document.GetPathName());
+                var liveConfiguration = TryGetActiveConfigurationName(cached.Document);
+                if (string.Equals(livePath, normalizedPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(liveConfiguration, cached.Configuration, StringComparison.Ordinal))
+                {
+                    return (cached.Document, cached.Configuration, cached.Instances);
+                }
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+            }
+
+            _assemblyComponentIndex.ResolvedByPath.Remove(normalizedPath);
+        }
+
         if (_assemblyComponentIndex is null)
         {
-            WriteLog(log, "正在读取总装配组件清单，本轮修改只扫描一次。");
-            var byPath = new Dictionary<string, List<IComponent2>>(StringComparer.OrdinalIgnoreCase);
+            WriteLog(log, "正在读取总装配组件清单（首次扫描约需 30 秒，本轮后续读取直接走内存缓存）...");
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var components = ((IAssemblyDoc)assembly).GetComponents(false) as object[]
-                ?? throw new InvalidOperationException("装配组件清单未知，禁止继续修改。");
-            foreach (var value in components)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (value is not IComponent2 candidate)
-                    throw new InvalidOperationException("装配组件身份未知，禁止继续修改。");
-                var raw = candidate.GetPathName();
-                if (!Path.IsPathFullyQualified(raw)) continue;
-                var candidatePath = NormalizeFilePath(raw);
-                if (!byPath.TryGetValue(candidatePath, out var matches))
-                    byPath[candidatePath] = matches = [];
-                matches.Add(candidate);
-            }
-            _assemblyComponentIndex = new AssemblyComponentIndex(assemblyPath, assemblyConfiguration, byPath, components.Length);
-            WriteLog(log, $"总装配组件清单已就绪。Components={components.Length}; UniquePaths={byPath.Count}; ElapsedMs={stopwatch.ElapsedMilliseconds}");
+            var (byPath, count) = ScanAssemblyComponentsByPath(assembly, cancellationToken);
+            _assemblyComponentIndex = new AssemblyComponentIndex(
+                assemblyPath,
+                assemblyConfiguration,
+                byPath,
+                new Dictionary<string, ResolvedComponentEntry>(StringComparer.OrdinalIgnoreCase),
+                count);
+            WriteLog(log, $"总装配组件清单已就绪。Components={count}; UniquePaths={byPath.Count}; ElapsedMs={stopwatch.ElapsedMilliseconds}");
         }
+
         var instances = new List<string>();
         var suppressedMatches = 0;
         IModelDoc2? document = null;
         string? configuration = null;
         _assemblyComponentIndex.ByPath.TryGetValue(normalizedPath, out var targetComponents);
-        foreach (var component in targetComponents ?? [])
+        using (SuspendFeatureTreeUpdates(assembly))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!string.Equals(NormalizeFilePath(component.GetPathName()), normalizedPath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("修改过程中组件引用路径已变化。");
-            var state = (swComponentSuppressionState_e)component.GetSuppression();
-            if (state == swComponentSuppressionState_e.swComponentSuppressed) { suppressedMatches++; continue; }
-            if (state is swComponentSuppressionState_e.swComponentLightweight or swComponentSuppressionState_e.swComponentFullyLightweight)
+            foreach (var component in targetComponents ?? [])
             {
-                WriteLog(log, $"正在解析目标组件：{component.Name2}");
-                var status = component.SetSuppression2((int)swComponentSuppressionState_e.swComponentResolved);
-                if (status != (int)swSuppressionError_e.swSuppressionChangeOk)
-                    throw new InvalidOperationException($"目标组件 {component.Name2} 无法解析，SolidWorks 状态码：{status}。");
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!string.Equals(NormalizeFilePath(component.GetPathName()), normalizedPath, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("修改过程中组件引用路径已变化。");
+                var state = GetComponentSuppressionState(component);
+                if (state == swComponentSuppressionState_e.swComponentSuppressed)
+                {
+                    suppressedMatches++;
+                    continue;
+                }
+
+                if (state is swComponentSuppressionState_e.swComponentLightweight
+                    or swComponentSuppressionState_e.swComponentFullyLightweight)
+                {
+                    WriteLog(log, $"正在解析目标组件：{component.Name2}");
+                    var status = component.SetSuppression2((int)swComponentSuppressionState_e.swComponentResolved);
+                    if (status != (int)swSuppressionError_e.swSuppressionChangeOk)
+                        throw new InvalidOperationException($"目标组件 {component.Name2} 无法解析，SolidWorks 状态码：{status}。");
+                }
+                else if (state is not (swComponentSuppressionState_e.swComponentResolved or swComponentSuppressionState_e.swComponentFullyResolved))
+                {
+                    throw new InvalidOperationException($"目标组件状态异常：{component.Name2} / {state}。");
+                }
+
+                var referencedConfiguration = component.ReferencedConfiguration;
+                if (component.GetModelDoc2() is not IModelDoc2 loaded ||
+                    !string.Equals(NormalizeFilePath(loaded.GetPathName()), normalizedPath, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"组件 {component.Name2} 尚未完整加载，请在总装配中将组件设为完全解析后重试。");
+                if (string.IsNullOrWhiteSpace(referencedConfiguration) ||
+                    !string.Equals(referencedConfiguration, TryGetActiveConfigurationName(loaded), StringComparison.Ordinal) ||
+                    (configuration is not null && !string.Equals(configuration, referencedConfiguration, StringComparison.Ordinal)))
+                    throw new InvalidOperationException($"组件 {component.Name2} 的活动配置与装配引用配置不一致。");
+                configuration = referencedConfiguration;
+                document = loaded;
+                instances.Add(component.Name2);
             }
-            else if (state is not (swComponentSuppressionState_e.swComponentResolved or swComponentSuppressionState_e.swComponentFullyResolved))
-                throw new InvalidOperationException($"目标组件状态异常：{component.Name2} / {state}。");
-            var referencedConfiguration = component.ReferencedConfiguration;
-            if (component.GetModelDoc2() is not IModelDoc2 loaded ||
-                !string.Equals(NormalizeFilePath(loaded.GetPathName()), normalizedPath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"组件 {component.Name2} 尚未完整加载，请在总装配中将组件设为完全解析后重试。");
-            if (string.IsNullOrWhiteSpace(referencedConfiguration) ||
-                !string.Equals(referencedConfiguration, TryGetActiveConfigurationName(loaded), StringComparison.Ordinal) ||
-                (configuration is not null && !string.Equals(configuration, referencedConfiguration, StringComparison.Ordinal)))
-                throw new InvalidOperationException($"组件 {component.Name2} 的活动配置与装配引用配置不一致。");
-            configuration = referencedConfiguration;
-            document = loaded;
-            instances.Add(component.Name2);
         }
         if (document is null || configuration is null)
         {
@@ -427,7 +589,10 @@ public sealed partial class SolidWorksService
                 : $"当前装配索引含 {_assemblyComponentIndex.Count} 个组件，未找到此零件。";
             throw new InvalidOperationException($"当前总装配无法加载工作零件 {Path.GetFileName(path)}。{detail}");
         }
-        return (document, configuration, string.Join(";", instances));
+
+        var instancesSummary = string.Join(";", instances);
+        _assemblyComponentIndex.ResolvedByPath[normalizedPath] = new ResolvedComponentEntry(document, configuration, instancesSummary);
+        return (document, configuration, instancesSummary);
     }
 
     // A dimension probe never opens a document or connects to a different session.

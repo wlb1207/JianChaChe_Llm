@@ -37,7 +37,8 @@ public sealed class LlmResponseParseException : InvalidOperationException
 public sealed record LlmChatRequestOptions(
     bool ReplyOnlyMode = false,
     string? IntentLabel = null,
-    bool AllowApdlLauncherAction = false);
+    bool AllowApdlLauncherAction = false,
+    string? RuntimeContextSummary = null);
 
 public interface ILlmService
 {

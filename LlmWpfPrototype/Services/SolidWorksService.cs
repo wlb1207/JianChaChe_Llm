@@ -422,8 +422,11 @@ public sealed partial class SolidWorksService : ISolidWorksService
         }
         finally
         {
-            var restoreResult = false;
-            if (!string.IsNullOrWhiteSpace(originalActiveDocumentTitle))
+            var currentActiveBeforeRestore = GetActiveDocument();
+            var alreadyActive = !string.IsNullOrWhiteSpace(originalActiveDocumentTitle) &&
+                                string.Equals(currentActiveBeforeRestore?.GetTitle(), originalActiveDocumentTitle, StringComparison.OrdinalIgnoreCase);
+            var restoreResult = alreadyActive;
+            if (!alreadyActive && !string.IsNullOrWhiteSpace(originalActiveDocumentTitle))
             {
                 restoreResult = TryActivateDocumentByTitle(originalActiveDocumentTitle, logWriter);
             }
@@ -702,16 +705,19 @@ public sealed partial class SolidWorksService : ISolidWorksService
                 }
             }
 
-            foreach (var document in touchedDocuments.Values)
+            using (SuspendFeatureTreeUpdates(GetActiveDocument()))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                EnsureSafeDocumentOperation(document, logWriter);
-                if (!document.ForceRebuild3(false))
+                foreach (var document in touchedDocuments.Values)
                 {
-                    WriteLog(logWriter, $"Transaction rebuild failed. Path={document.GetPathName()}");
-                    RestorePreparedUpdates(preparedUpdates, logWriter);
-                    return false;
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    EnsureSafeDocumentOperation(document, logWriter);
+                    if (!document.ForceRebuild3(false))
+                    {
+                        WriteLog(logWriter, $"Transaction rebuild failed. Path={document.GetPathName()}");
+                        RestorePreparedUpdates(preparedUpdates, logWriter);
+                        return false;
+                    }
                 }
             }
 
@@ -777,6 +783,12 @@ public sealed partial class SolidWorksService : ISolidWorksService
         }
 
         var model = GetOpenedDocumentByPath(update.PartFilePath);
+        if (model is null &&
+            TryGetLoadedAssemblyComponentModel(update.PartFilePath, logWriter, CancellationToken.None, out var assemblyComponentModel))
+        {
+            model = assemblyComponentModel;
+        }
+
         var wasOpenedByThisFlow = false;
         var isLinkedLowerChordPart = update.ParameterName.StartsWith("linked_lower_chord_part.", StringComparison.OrdinalIgnoreCase);
         var linkedPartBeforeLastWriteTime = DateTime.MinValue;
@@ -806,9 +818,9 @@ public sealed partial class SolidWorksService : ISolidWorksService
             }
 
             wasOpenedByThisFlow = true;
+            model = GetOpenedDocumentByPath(update.PartFilePath);
         }
 
-        model = GetOpenedDocumentByPath(update.PartFilePath);
         if (model is null)
         {
             return false;
@@ -820,7 +832,10 @@ public sealed partial class SolidWorksService : ISolidWorksService
             WriteLog(logWriter, "[LinkedPart] Applying linked lower chord update");
         }
 
-        ActivateDocument(model, logWriter);
+        if (wasOpenedByThisFlow)
+        {
+            ActivateDocument(model, logWriter);
+        }
 
         if (!TryResolveDimensionReference(model, update.DimensionName, out var reference))
         {
@@ -1001,12 +1016,20 @@ public sealed partial class SolidWorksService : ISolidWorksService
             return;
         }
 
-        var reactivated = TryActivateDocumentByTitle(assemblyDocument.GetTitle(), logWriter);
+        var alreadyActiveAssembly = string.Equals(
+            GetActiveDocument()?.GetTitle(),
+            assemblyDocument.GetTitle(),
+            StringComparison.OrdinalIgnoreCase);
+        var reactivated = alreadyActiveAssembly || TryActivateDocumentByTitle(assemblyDocument.GetTitle(), logWriter);
         WriteLog(logWriter, $"ReactivatedAssembly={(reactivated ? assemblyDocument.GetTitle() : "False")}");
         if (reactivated)
         {
             EnsureSafeDocumentOperation(assemblyDocument, logWriter);
-            var rebuildSucceeded = assemblyDocument.ForceRebuild3(false);
+            bool rebuildSucceeded;
+            using (SuspendFeatureTreeUpdates(assemblyDocument))
+            {
+                rebuildSucceeded = assemblyDocument.ForceRebuild3(false);
+            }
             WriteLog(logWriter, $"RebuildAssemblyAfterPartClose={rebuildSucceeded}");
             try
             {
@@ -1104,19 +1127,35 @@ public sealed partial class SolidWorksService : ISolidWorksService
         reference = null!;
 
         var model = GetOpenedDocumentByPath(partFilePath);
-        if (model is null && !TryOpenDocumentByCom(partFilePath, (int)swDocumentTypes_e.swDocPART, logWriter))
+        if (model is null &&
+            TryGetLoadedAssemblyComponentModel(partFilePath, logWriter, CancellationToken.None, out var assemblyComponentModel))
         {
-            return false;
+            model = assemblyComponentModel;
         }
 
-        model = GetOpenedDocumentByPath(partFilePath);
+        var openedStandalone = false;
+        if (model is null)
+        {
+            if (!TryOpenDocumentByCom(partFilePath, (int)swDocumentTypes_e.swDocPART, logWriter))
+            {
+                return false;
+            }
+
+            openedStandalone = true;
+            model = GetOpenedDocumentByPath(partFilePath);
+        }
+
         if (model is null)
         {
             WriteLog(logWriter, $"Document object not available after opening part. Path={partFilePath}");
             return false;
         }
 
-        ActivateDocument(model, logWriter);
+        if (openedStandalone)
+        {
+            ActivateDocument(model, logWriter);
+        }
+
         return TryResolveDimensionReference(model, dimensionName, out reference);
     }
 

@@ -12,6 +12,7 @@ public class FakeCad : DispatchProxy
     public decimal CurrentProfileInner = 60m;
     public bool MissingInnerDimension;
     public bool Disconnected;
+    public bool AllowStandaloneProbe;
     public IReadOnlyList<SolidWorksDimensionUpdateRequest> Requests = [];
     public List<string> Probes = [];
     protected override object? Invoke(MethodInfo? method, object?[]? args)
@@ -19,7 +20,21 @@ public class FakeCad : DispatchProxy
         switch(method!.Name)
         {
             case "ProbeDimensionAsync":
-                throw new InvalidOperationException("Upper chord must not open a standalone part to probe dimensions.");
+                if (!AllowStandaloneProbe)
+                    throw new InvalidOperationException("Upper chord must not open a standalone part to probe dimensions.");
+                var standalonePart = (string)args![0]!; var standaloneDim = (string)args[1]!;
+                Probes.Add(standalonePart + "|" + standaloneDim);
+                var isInner1159 = standaloneDim.StartsWith("D4@草图2@", StringComparison.Ordinal) ||
+                                  standaloneDim.StartsWith("D2@草图2@1-方管", StringComparison.Ordinal);
+                var isWall = standaloneDim.Contains("拉伸-薄壁", StringComparison.Ordinal);
+                return Task.FromResult(new SolidWorksDimensionProbeResult
+                {
+                    Found = true,
+                    PartFilePath = standalonePart,
+                    ResolvedDimensionName = standaloneDim,
+                    Configuration = "Default",
+                    CurrentValue = isWall ? 5m : (isInner1159 ? 60m : 70m)
+                });
             case "ReadOpenDimensionAsync":
                 var part = (string)args![0]!; var dim = (string)args[1]!;
                 Probes.Add(part+"|"+dim);
@@ -267,6 +282,55 @@ static class Program
             Assert(blocked&&File.Exists(guard.MarkerPath),"restart lost recovery block");
             guard.CompleteVerified();guard.RequireClear();Assert(File.Exists(part),"guard removed model fixture");
         }));
+        await Test("lower_truss resolves working model path, updates 1159+20-下+1530, and ignores stray 初始模型 subfolder", async () =>
+        {
+            var f = new Fixture();
+            f.Cad.AllowStandaloneProbe = true;
+            var primary1159 = Path.Combine(f.Work, @"桁架2\1-方管70×70×5-1159.SLDPRT");
+            var linked1530 = Path.Combine(f.Work, @"桁架1\1-方管70×70×5-1530.SLDPRT");
+            var stray20Lower = Path.Combine(f.Work, @"初始模型\桁架2\20-下-方管70×70×5-1280.SLDPRT");
+            f.FakeFile(primary1159);
+            f.FakeFile(linked1530);
+            f.FakeFile(stray20Lower);
+
+            var r = await f.Run("把下桁架改成 60x60x6");
+            Assert(r.Succeeded && f.Cad.Updates == 1, "lower_truss dispatch failed: " + string.Join(" | ", r.AssistantMessages));
+            Assert(f.Cad.Requests.Count == 9, $"expected 4 (1159) + 2 (20-下) + 3 (1530) = 9 requests, got {f.Cad.Requests.Count}");
+            Assert(f.Cad.Requests.All(req => req.PartFilePath.StartsWith(f.Work, StringComparison.OrdinalIgnoreCase)), "request escaped working folder");
+            Assert(!f.Cad.Requests.Any(req => req.PartFilePath.Contains("初始模型", StringComparison.OrdinalIgnoreCase)), "stray 初始模型 copy was selected");
+            var innerRequests = f.Cad.Requests.Where(req => req.PartFilePath == primary1159 && (req.DimensionName.StartsWith("D4@") || req.DimensionName.StartsWith("D2@"))).ToList();
+            Assert(innerRequests.Count == 2 && innerRequests.All(req => req.Value == "48"), "expected derived inner size 60 - 2*6 = 48");
+        });
+        await Test("lower_truss section-only edit preserves existing 5mm wall thickness", async () =>
+        {
+            var f = new Fixture();
+            f.Cad.AllowStandaloneProbe = true;
+            f.FakeFile(Path.Combine(f.Work, @"桁架2\1-方管70×70×5-1159.SLDPRT"));
+            f.FakeFile(Path.Combine(f.Work, @"桁架1\1-方管70×70×5-1530.SLDPRT"));
+
+            var r = await f.Run("把下桁架截面改成 60x60");
+            Assert(r.Succeeded && f.Cad.Updates == 1, "lower_truss section-only dispatch failed: " + string.Join(" | ", r.AssistantMessages));
+            var innerRequests = f.Cad.Requests.Where(req => req.PartFilePath.EndsWith("1-方管70×70×5-1159.SLDPRT", StringComparison.OrdinalIgnoreCase) &&
+                (req.DimensionName.StartsWith("D4@") || req.DimensionName.StartsWith("D2@"))).ToList();
+            Assert(innerRequests.Count == 2 && innerRequests.All(req => req.Value == "50"), "expected preserved wall 60 - 2*5 = 50");
+        });
+        await Test("lower_chord updates 3 main parts + linked 1159 + real 20-下 + linked 1530 and ignores stray 初始模型", async () =>
+        {
+            var f = new Fixture();
+            f.Cad.AllowStandaloneProbe = true;
+            f.FakeFile(Path.Combine(f.Work, @"桁架1\34-方管70×70×5×6575.SLDPRT"));
+            f.FakeFile(Path.Combine(f.Work, @"桁架1\33-方管70×70×5×838.SLDPRT"));
+            f.FakeFile(Path.Combine(f.Work, @"桁架2\10-方管70×70×5-6375.SLDPRT"));
+            f.FakeFile(Path.Combine(f.Work, @"桁架2\1-方管70×70×5-1159.SLDPRT"));
+            f.FakeFile(Path.Combine(f.Work, @"桁架1\1-方管70×70×5-1530.SLDPRT"));
+            f.FakeFile(Path.Combine(f.Work, @"初始模型\桁架2\20-下-方管70×70×5-1280.SLDPRT"));
+
+            var r = await f.Run("把桁架下弦杆截面改成 65x65x4");
+            Assert(r.Succeeded && f.Cad.Updates == 1, "lower_chord dispatch failed: " + string.Join(" | ", r.AssistantMessages));
+            Assert(f.Cad.Requests.Count == 18, $"expected 9 (3 main) + 4 (1159) + 2 (20-下) + 3 (1530) = 18 requests, got {f.Cad.Requests.Count}");
+            Assert(f.Cad.Requests.All(req => req.PartFilePath.StartsWith(f.Work, StringComparison.OrdinalIgnoreCase)), "lower_chord request escaped working folder");
+            Assert(!f.Cad.Requests.Any(req => req.PartFilePath.Contains("初始模型", StringComparison.OrdinalIgnoreCase)), "stray 初始模型 copy was selected");
+        });
         Console.WriteLine($"RESULT Passed={Pass} Failed={Fail}; fake files and CAD delegates only; no network or SolidWorks started");
         return Fail==0?0:1;
     }
