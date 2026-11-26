@@ -360,13 +360,29 @@ public sealed partial class MainViewModel
             {
                 var latency = result.ElapsedMilliseconds.HasValue ? $"延迟 {result.ElapsedMilliseconds.Value} ms" : "已就绪";
                 SetLlmRuntimeStatus("在线", $"模型服务已连接（{latency}），点击可重新检测");
-                AppendLog($"[LLM Probe] 启动/重连探测成功：{latency}");
+                if (isStartupProbe)
+                {
+                    AppendGlobalDiagnosticLogOnly($"[LLM Probe] 启动探测成功：{latency}");
+                }
+                else
+                {
+                    AppendLog($"[LLM Probe] 重连探测成功：{latency}");
+                    SaveActiveConversationLogsSnapshot();
+                }
             }
             else
             {
                 var err = string.IsNullOrWhiteSpace(result.ExceptionMessage) ? "网络或代理异常" : result.ExceptionMessage;
                 SetLlmRuntimeStatus("异常", $"连接异常：{err}（点击胶囊立即重试）");
-                AppendLog($"[LLM Probe] 连接探测失败：{err}");
+                if (isStartupProbe)
+                {
+                    AppendGlobalDiagnosticLogOnly($"[LLM Probe] 启动探测失败：{err}");
+                }
+                else
+                {
+                    AppendLog($"[LLM Probe] 连接探测失败：{err}");
+                    SaveActiveConversationLogsSnapshot();
+                }
             }
         }
         catch (Exception ex)
@@ -374,7 +390,15 @@ public sealed partial class MainViewModel
             if (_llmStatusGeneration == probeStartGeneration || !IsLlmStatusOnline)
             {
                 SetLlmRuntimeStatus("异常", $"连接异常：{ex.Message}（点击胶囊立即重试）");
-                AppendLog($"[LLM Probe] 连接探测异常：{ex.Message}");
+                if (isStartupProbe)
+                {
+                    AppendGlobalDiagnosticLogOnly($"[LLM Probe] 启动探测异常：{ex.Message}");
+                }
+                else
+                {
+                    AppendLog($"[LLM Probe] 连接探测异常：{ex.Message}");
+                    SaveActiveConversationLogsSnapshot();
+                }
             }
         }
         finally
@@ -391,6 +415,8 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(HasPendingCadConfirmation));
         OnPropertyChanged(nameof(PendingCadConfirmationSummary));
         OnPropertyChanged(nameof(CanConfirmBusiness));
+        OnPropertyChanged(nameof(ShowWelcomeDashboard));
+        OnPropertyChanged(nameof(ShowChatMessageStream));
         OnPropertyChanged(nameof(ShowWelcomeQuickPrompts));
         OnPropertyChanged(nameof(IsLlmStatusOnline));
         OnPropertyChanged(nameof(IsLlmStatusConnecting));
@@ -661,10 +687,11 @@ public sealed partial class MainViewModel
             _workspaceManager.DefaultWorkingModelFolder,
             isDefaultProject: true,
             isMaterialized: false,
-            message => AppendLog(message));
+            message => AppendGlobalDiagnosticLogOnly(message));
 
         ChatMessages.Clear();
         _memoryStore.Clear();
+        LoadConversationLogEntries([]);
 
         _suppressDraftPersistence = true;
         try
@@ -698,7 +725,9 @@ public sealed partial class MainViewModel
             created.WorkspaceFolder,
             created.IsDefaultProject,
             created.IsWorkspaceMaterialized,
-            message => AppendLog(message));
+            message => AppendGlobalDiagnosticLogOnly(message));
+
+        LoadConversationLogEntries(_projectStore.LoadConversationLogs(created.Id, conv.Id));
 
         SyncVersionHistoryCollection();
         RefreshProjectHudProperties();
@@ -799,7 +828,7 @@ public sealed partial class MainViewModel
             project.WorkspaceFolder,
             project.IsDefaultProject,
             project.IsWorkspaceMaterialized,
-            message => AppendLog(message));
+            message => AppendGlobalDiagnosticLogOnly(message));
 
         var targetConv = (!string.IsNullOrWhiteSpace(conversationId)
             ? _projectStore.TryLoadConversation(project.Id, conversationId)
@@ -807,6 +836,8 @@ public sealed partial class MainViewModel
 
         _activeConversation = targetConv;
         project.ActiveConversationId = targetConv.Id;
+
+        LoadConversationLogEntries(_projectStore.LoadConversationLogs(project.Id, targetConv.Id));
 
         _lastModifiedParameterSummary = project.CurrentVersionNumber > 0
             ? (project.VersionHistory.LastOrDefault()?.Summary ?? project.VersionBadgeText)
@@ -862,8 +893,20 @@ public sealed partial class MainViewModel
         _activeConversation.Actions = _memoryStore.ExportPersistedActions();
 
         _projectStore.SaveConversationState(active, _activeConversation);
+        SaveActiveConversationLogsSnapshot();
         OnPropertyChanged(nameof(CurrentProjectHeaderBadge));
+        OnPropertyChanged(nameof(CurrentLogScopeSummary));
         UpdateSidebarConversationItemInPlace();
+    }
+
+    private void SaveActiveConversationLogsSnapshot()
+    {
+        if (_projectStore is null || _activeConversation is null || ActiveProject is not { } active)
+        {
+            return;
+        }
+
+        _projectStore.SaveConversationLogs(active.Id, _activeConversation.Id, LogEntries);
     }
 
     private void SaveDraftInputIfReady()
@@ -1175,6 +1218,8 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(CurrentLowerChordHud));
         OnPropertyChanged(nameof(CurrentLowerTrussHud));
         OnPropertyChanged(nameof(CurrentProjectWorkspaceSummary));
+        OnPropertyChanged(nameof(CurrentLogScopeSummary));
+        RefreshWelcomeDashboard();
     }
 
     private void RebuildProjectSidebarItems()

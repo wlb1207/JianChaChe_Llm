@@ -2,10 +2,14 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Documents;
 using LlmWpfPrototype.Models;
+using LlmWpfPrototype.Presentation;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Chat;
 using LlmWpfPrototype.Services.Design;
 using LlmWpfPrototype.Services.Project;
+using LlmWpfPrototype.Services.Rag;
 using LlmWpfPrototype.Services.Simulation;
 using LlmWpfPrototype.ViewModels;
 
@@ -536,6 +540,523 @@ llm.TestConnectionHandler = null;
 Console.WriteLine("PASS 4-state LLM connectivity status machine, green/red dot synchronization, and reconnect probe");
 Console.WriteLine("PASS multi-project lazy/forked workspaces, unique numbering, zero-project deletion, auto-creation, report export, and cold-restart persistence");
 
+// --- Per-conversation log isolation, persistence, and SaveFileDialog + clipboard .txt export checks ---
+Require(vm3.LogEntries.Count > 0, "Expected TestLlmConnectionCommand logs in vm3 current conversation.");
+var conv1Id = vm3.ActiveProject!.ActiveConversationId;
+var conv1LogCount = vm3.LogEntries.Count;
+Require(vm3.Logs.Contains("[LLM Test]", StringComparison.Ordinal), "Expected LLM test logs in conversation 1.");
+
+// Test ExportLogsCommand cancel path (must not write or touch clipboard)
+string? copiedByExport = null;
+vm3.ClipboardWriterOverride = text => { copiedByExport = text; return Task.FromResult(true); };
+vm3.SelectLogExportPathHandler = (_, _) => null;
+await vm3.ExportLogsCommand.ExecuteAsync();
+Require(copiedByExport is null && vm3.StatusMessage.Contains("已取消导出日志", StringComparison.Ordinal),
+    "Cancelling log export unexpectedly wrote clipboard or wrong status: " + vm3.StatusMessage);
+
+// Test ExportLogsCommand save + sync clipboard copy path
+var exportedLogDir = Path.Combine(workspaceRoot, "exported_logs");
+string? capturedSuggestedName = null;
+string? exportedTxtPath = null;
+vm3.SelectLogExportPathHandler = (suggestedName, _) =>
+{
+    capturedSuggestedName = suggestedName;
+    exportedTxtPath = Path.Combine(exportedLogDir, suggestedName);
+    return exportedTxtPath;
+};
+await vm3.ExportLogsCommand.ExecuteAsync();
+Require(!string.IsNullOrWhiteSpace(capturedSuggestedName) && capturedSuggestedName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase),
+    "Log export did not suggest a .txt file name: " + capturedSuggestedName);
+Require(!string.IsNullOrWhiteSpace(exportedTxtPath) && File.Exists(exportedTxtPath),
+    "Log export did not create the chosen .txt file.");
+var exportedFileText = File.ReadAllText(exportedTxtPath!, Encoding.UTF8);
+Require(exportedFileText.Contains("单对话运行日志", StringComparison.Ordinal) &&
+    exportedFileText.Contains("轻量化方案 1", StringComparison.Ordinal) &&
+    exportedFileText.Contains("[LLM Test]", StringComparison.Ordinal) &&
+    string.Equals(copiedByExport, exportedFileText, StringComparison.Ordinal) &&
+    vm3.StatusMessage.Contains("并已同步复制到剪贴板", StringComparison.Ordinal),
+    "Exported .txt log content or synced clipboard copy did not match expectations: " + vm3.StatusMessage);
+
+// Creating a new conversation MUST start with clean 0 logs (no accumulation from conv1!)
+await vm3.CreateNewConversationCommand.ExecuteAsync();
+var conv2Id = vm3.ActiveProject!.ActiveConversationId;
+Require(conv2Id != conv1Id && vm3.LogEntries.Count == 0 && string.IsNullOrEmpty(vm3.Logs),
+    $"New conversation did not isolate logs cleanly (count={vm3.LogEntries.Count}).");
+
+await SendAsync(vm3, "解释当前能力");
+Require(vm3.LogEntries.Count > 0 && !vm3.Logs.Contains("[LLM Test]", StringComparison.Ordinal),
+    "Conversation 2 logs were polluted by Conversation 1 logs.");
+var conv2LogCount = vm3.LogEntries.Count;
+
+// Switching back to conv1 MUST restore conv1's saved logs!
+var conv1VmItem = vm3.FilteredProjects.Single().Conversations.Single(c => c.Id == conv1Id);
+await vm3.SelectConversationCommand.ExecuteAsync(conv1VmItem);
+Require(vm3.LogEntries.Count == conv1LogCount && vm3.Logs.Contains("[LLM Test]", StringComparison.Ordinal),
+    "Switching back to Conversation 1 did not restore its persisted logs.");
+
+// ClearLogsCommand clears ONLY conv1 and persists cleared state; conv2 remains intact
+await vm3.ClearLogsCommand.ExecuteAsync();
+Require(vm3.LogEntries.Count == 0, "ClearLogsCommand did not clear Conversation 1 logs.");
+var conv2VmItem = vm3.FilteredProjects.Single().Conversations.Single(c => c.Id == conv2Id);
+await vm3.SelectConversationCommand.ExecuteAsync(conv2VmItem);
+Require(vm3.LogEntries.Count == conv2LogCount, "Clearing Conversation 1 logs unexpectedly affected Conversation 2.");
+conv1VmItem = vm3.FilteredProjects.Single().Conversations.Single(c => c.Id == conv1Id);
+await vm3.SelectConversationCommand.ExecuteAsync(conv1VmItem);
+Require(vm3.LogEntries.Count == 0, "Cleared state of Conversation 1 did not persist after switching away and back.");
+Console.WriteLine("PASS per-conversation log isolation, persistence, and SaveFileDialog + clipboard .txt log export");
+
+// --- Phase 1 LLM parsing & safety guard regression checks ---
+// 1. "打开模型，我看一下，我看看最初的模型是什么样子的" must NOT be trapped in PureQuestion / ReplyOnlyMode!
+var openBeforeNatural = cad.Opened.Count;
+var naturalOpenReply = await SendAsync(vm3, "打开模型，我看一下，我看看最初的模型是什么样子的");
+Require(llm.LastOptions?.ReplyOnlyMode == false && cad.Opened.Count == openBeforeNatural + 1 &&
+    naturalOpenReply.Text.Contains("模型已打开", StringComparison.Ordinal),
+    $"Natural open-model command was blocked by PureQuestion: ReplyOnly={llm.LastOptions?.ReplyOnlyMode}, Opened={cad.Opened.Count}, Text={naturalOpenReply.Text}");
+
+// 2. "解释当前能力" and "你这个智能设计系统可以做什么?" route to CapabilityQuestion ReplyOnlyMode (no JSON repair needed)
+//    AND when SolidWorks IS genuinely open, factual "当前 SolidWorks 模型已打开..." reply is preserved (no false-positive kill or double rewrite!)
+llm.CustomDesignReply = """{"reply":"当前 SolidWorks 模型已打开，我可以协助你查询截面尺寸、评估上/下弦杆调整方案并启动 APDL。","actions":[],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}""";
+var explainOpenReply = await SendAsync(vm3, "解释当前能力");
+Require(llm.LastOptions?.ReplyOnlyMode == true && llm.LastOptions.IntentLabel == "CapabilityQuestion" &&
+    explainOpenReply.Text.Contains("当前 SolidWorks 模型已打开", StringComparison.Ordinal) &&
+    !explainOpenReply.Text.Contains("我没有解析到可执行动作", StringComparison.Ordinal),
+    "Capability explanation while model is open was falsely killed or misrouted: " + explainOpenReply.Text);
+
+var systemCanDoReply = await SendAsync(vm3, "你这个智能设计系统可以做什么?");
+Require(llm.LastOptions?.ReplyOnlyMode == true && llm.LastOptions.IntentLabel == "CapabilityQuestion" &&
+    systemCanDoReply.Text.Contains("当前 SolidWorks 模型已打开", StringComparison.Ordinal),
+    "System capability question was not routed to CapabilityQuestion or falsely killed: " + systemCanDoReply.Text);
+
+// 3. Even while SolidWorks is open, explicit hallucinated execution claims ("已为你打开并已完成修改，已保存") MUST still be blocked
+//    AND must fall back to CapabilityQuestion guidance (NEVER to "我没有解析到可执行动作..." via double rewrite!).
+llm.CustomDesignReply = """{"reply":"已为你打开并已完成修改，已保存模型。","actions":[],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}""";
+var blockedHallucinationReply = await SendAsync(vm3, "你可以做什么？");
+Require(!blockedHallucinationReply.Text.Contains("已完成修改", StringComparison.Ordinal) &&
+    !blockedHallucinationReply.Text.Contains("我没有解析到可执行动作", StringComparison.Ordinal) &&
+    blockedHallucinationReply.Text.Contains("目前可以协助你", StringComparison.Ordinal),
+    "Hallucinated execution claim was not safely rewritten to CapabilityQuestion fallback: " + blockedHallucinationReply.Text);
+
+// 4. When SolidWorks is CLOSED, claiming "模型已打开" on a reply-only turn MUST still be blocked!
+cad.Opened.Clear();
+llm.CustomDesignReply = """{"reply":"当前 SolidWorks 模型已打开，你可以直接修改。","actions":[],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}""";
+var blockedClosedOpenClaim = await SendAsync(vm3, "你可以做什么？");
+Require(!blockedClosedOpenClaim.Text.Contains("你可以直接修改", StringComparison.Ordinal) &&
+    !blockedClosedOpenClaim.Text.Contains("我没有解析到可执行动作", StringComparison.Ordinal),
+    "False model-open claim while SolidWorks is closed was not blocked: " + blockedClosedOpenClaim.Text);
+llm.CustomDesignReply = null;
+Console.WriteLine("PASS Phase 1 LLM parsing & state-aware safety guard regression checks");
+
+// --- Extensible Multi-Standard Knowledge Base checks (GB/T 3811 + JT/T 1430 + GB 50017 + live dynamic drop-in) ---
+var kbSearch = LocalKnowledgeSearchService.CreateForApplication();
+var catalogSummary = kbSearch.BuildKnowledgeBaseCatalogSummary();
+Require(catalogSummary.Contains("GB/T 3811-2008", StringComparison.Ordinal) &&
+    catalogSummary.Contains("JT/T 1430-2022", StringComparison.Ordinal) &&
+    catalogSummary.Contains("GB 50017-2017", StringComparison.Ordinal),
+    "Multi-standard knowledge base catalog did not discover all 3 standards: " + catalogSummary);
+
+// 1. JT/T 1430-2022 end-to-end RAG query & DisclosureGuard pass
+llm.KnowledgeAnswer = "依据检查车规范，钢桁架悬臂端最大竖向挠度不应大于 L'/400 [E1]。";
+var jttReply = await SendAsync(vm3, "按 JT/T 1430-2022，钢桁架检查车悬臂端竖向挠度限值是多少？");
+Require(jttReply.IsLocalKnowledgeReply &&
+    jttReply.LocalCitationStatus.Contains("有效引用编号：E1", StringComparison.Ordinal) &&
+    jttReply.LocalSources.Any(s => s.Source.SourceDocument == "JT_T_1430_2022/verified/02_deflection_and_load_capacity.md" &&
+                                   s.Source.Standard == "JT/T 1430-2022"),
+    "JT/T 1430-2022 deflection query failed RAG retrieval or disclosure check: " + jttReply.Text);
+
+// 2. GB 50017-2017 end-to-end RAG query & DisclosureGuard pass
+llm.KnowledgeAnswer = "依据钢结构设计标准，轴心受压箱形截面壁板不出现局部失稳的宽厚比限值为 b/t <= 40εk [E1]。";
+var gb50017Reply = await SendAsync(vm3, "按 GB 50017-2017，轴心受压箱形方管壁板宽厚比限值是多少？");
+Require(gb50017Reply.IsLocalKnowledgeReply &&
+    gb50017Reply.LocalCitationStatus.Contains("有效引用编号：E1", StringComparison.Ordinal) &&
+    gb50017Reply.LocalSources.Any(s => s.Source.Standard == "GB 50017-2017" &&
+                                       s.Source.SourceDocument.StartsWith("GB_50017_2017/verified/", StringComparison.Ordinal)),
+    "GB 50017-2017 width-thickness query failed RAG retrieval or disclosure check: " + gb50017Reply.Text);
+
+// 3. Previously locked GB/T 3811-2008 deflection/stiffness card now passes DisclosureGuard too
+llm.KnowledgeAnswer = "依据 GB/T 3811-2008，有效悬臂位置挠度推荐不大于 L1/350 [E1]。";
+var gb3811StiffnessReply = await SendAsync(vm3, "按 GB/T 3811-2008，主梁悬臂静挠度 L1/350 的刚度要求是什么？");
+Require(gb3811StiffnessReply.IsLocalKnowledgeReply &&
+    gb3811StiffnessReply.LocalCitationStatus.Contains("有效引用编号：E1", StringComparison.Ordinal) &&
+    gb3811StiffnessReply.LocalSources.Any(s => s.Source.SourceDocument is "verified/02_main_girder_stiffness.md" or "verified/09_deflection_requirement.md"),
+    "Unlocked GB/T 3811-2008 stiffness/deflection rule failed RAG or disclosure check: " + gb3811StiffnessReply.Text);
+
+// 3b. Audited & expanded GB/T 3811-2008 structural/simulation rules end-to-end RAG + DisclosureGuard verification
+var gb3811UpgradedChecks = new (string Query, string ExpectedFile, string ExpectedClauseFragment, string MockAnswer)[]
+{
+    ("按 GB/T 3811-2008 表28，主要承载桁架弦杆受压和受拉容许长细比是多少？",
+        "verified/02_main_girder_stiffness.md", "表28",
+        "依据 GB/T 3811-2008 表28，主要承载桁架弦杆受压容许长细比为 150、受拉为 180 [E1]。"),
+    ("按 GB/T 3811-2008 第5.8节应力比法和附录O，结构疲劳校核怎么确定K2和K4等级？",
+        "verified/04_fatigue_check.md", "附录O",
+        "依据 GB/T 3811-2008 第5.8节与附录O，结构疲劳采用应力比法，E4级及以上应校核，推荐K2并尽量避免K4 [E1]。"),
+    ("按 GB/T 3811-2008 表34，闭口截面方管的最小防腐蚀壁厚是多少？",
+        "verified/13_structural_detailing_and_minimum_thickness.md", "表34",
+        "依据 GB/T 3811-2008 表34，闭口截面在微弱、中等、严重腐蚀环境下的最小厚度分别为 2.5 mm、4 mm、6 mm [E1]。"),
+    ("按 GB/T 3811-2008 附录I，如何通过 ZA、ZB、ZC 评价脆性破坏并选择钢材质量组别？",
+        "verified/14_brittle_fracture_and_steel_grade.md", "附录I",
+        "依据 GB/T 3811-2008 附录I，按焊缝类别ZA、厚度ZB与最低环境温度ZC之和确定钢材质量组别 1~4 [E1]。"),
+    ("按 GB/T 3811-2008 第6.3.4节，车轮在工字钢下翼缘运行时的有效接触宽度和允许轮压怎么校核？",
+        "verified/15_wheel_rail_and_mechanical_parts.md", "6.3.4",
+        "依据 GB/T 3811-2008 第6.3.4节，车轮在工字钢下翼缘运行有效接触宽度 l = w - r，静强校核 Pmax <= 1.9 k D l [E1]。"),
+    ("按 GB/T 3811-2008 第9.3.4节，安全栏杆的水平集中载荷 F=300L 和最大位移限值是多少？",
+        "verified/16_structural_safety_clearance_and_guardrails.md", "9.3.4",
+        "依据 GB/T 3811-2008 第9.3.4节，手扶栏杆应承受水平集中载荷 F = 300L 且无永久变形、最大位移不超过 30 mm [E1]。")
+};
+
+foreach (var check in gb3811UpgradedChecks)
+{
+    llm.KnowledgeAnswer = check.MockAnswer;
+    var checkReply = await SendAsync(vm3, check.Query);
+    Require(checkReply.IsLocalKnowledgeReply &&
+        checkReply.LocalCitationStatus.Contains("有效引用编号：E1", StringComparison.Ordinal) &&
+        checkReply.LocalSources.Any(s =>
+            s.Source.SourceDocument == check.ExpectedFile &&
+            s.Source.Clause.Contains(check.ExpectedClauseFragment, StringComparison.Ordinal)),
+        $"Upgraded GB/T 3811 check failed for '{check.ExpectedFile}': status={checkReply.LocalCitationStatus}, sources={string.Join(",", checkReply.LocalSources.Select(x => x.Source.SourceDocument))}, reply={checkReply.Text}");
+}
+Console.WriteLine("PASS audited & expanded GB/T 3811-2008 structural/simulation rules (表28/附录O/表34/附录I/6.3.4/9.3.4)");
+
+// 3c. Formula typography, Markdown table FlowDocument rendering, visible verified clauses, and multi-line formula/table evidence preservation
+var engineeringFormulas = new (string Latex, string MustContain, string MustNotContain)[]
+{
+    (@"\sqrt{\sigma^2 + \sigma_m^2 - \sigma\sigma_m + 3\tau^2} \le [\sigma]", "√(", @"\sqrt"),
+    (@"\frac{N}{\varphi A} + \frac{1}{1 - \frac{N}{N_{Ex}}} \cdot \frac{M_x}{W_x} \le [\sigma]", "N_Ex", @"\frac"),
+    (@"\left(\frac{\sigma_{x\max}}{[\sigma_{xr}]}\right)^2 + \left(\frac{\tau_{xy\max}}{[\tau_{xyr}]}\right)^2 \le 1.1", "(σₓₘₐₓ / [σₓᵣ])²", @"(("),
+    (@"K_P = \sum_{i=1}^{n} \frac{C_i}{C_T} \left[\frac{P_{Qi}}{P_{Q\max}}\right]^3", "∑", @"\sum"),
+    (@"\sigma_E = 18.62\left(\frac{100t}{b}\right)^2 \text{ MPa}", "MPa", @"\text"),
+    (@"40^\circ \sim 70^\circ,\; f_1 \le \frac{L^\prime}{400}", "40°", @"\circ"),
+    (@"\sqrt[3]{K_m}", "∛(Kₘ)", @"\sqrt"),
+    (@"\begin{cases} [\sigma_{rt}] = \frac{5}{3-2r}[\sigma_{-1}], & -1 \le r \le 0 \\ [\sigma_{rc}] = \frac{2}{1-r}[\sigma_{-1}], & -1 \le r \le 0 \end{cases}", "\n", @"\begin")
+};
+
+foreach (var (latex, mustContain, mustNotContain) in engineeringFormulas)
+{
+    Require(RagFormulaText.TryFormat(latex, out var formatted) &&
+        formatted.Contains(mustContain, StringComparison.Ordinal) &&
+        !formatted.Contains(mustNotContain, StringComparison.Ordinal) &&
+        !formatted.Contains('\\'),
+        $"Formula formatting failed for '{latex}': got '{formatted}'");
+}
+
+Exception? staError = null;
+var staThread = new Thread(() =>
+{
+    try
+    {
+        var sampleEvidence = new[]
+        {
+            new LocalChatEvidence(
+                "E1",
+                new LocalKnowledgeHit(1, "结构疲劳强度校核", "verified/04_fatigue_check.md", "5.8, 附录O", "verified-rule-0004", 10.0, "依据测试片段", "疲劳"),
+                "依据测试片段")
+        };
+        const string sampleMarkup = """
+            依据 GB/T 3811—2008 第 5.8 节与附录 O，当$\lambda \le 150$且\(\sigma_{\max} \le [\sigma]\)时 [E1]：
+
+            \[\left(\frac{\sigma_{x\max}}{[\sigma_{xr}]}\right)^2 + \left(\frac{\tau_{xy\max}}{[\tau_{xyr}]}\right)^2 \le 1.1\]
+
+            | 载荷组合 | 安全系数 n | 基本许用应力 |
+            |---|---:|---|
+            | 组合 A | 1.48 | \(\sigma_s / 1.48\) |
+            | 组合 B | 1.34 | \(\sigma_s / 1.34\) |
+
+            > 工程提示：焊接接头推荐采用 K2，避免 K4。
+            """;
+
+        var doc = RagFormattedText.BuildDocument(sampleMarkup, sampleEvidence, hideSourceReferences: false);
+        var tables = doc.Blocks.OfType<Table>().ToArray();
+        Require(tables.Length == 1 && tables[0].RowGroups.Count == 2 &&
+            tables[0].RowGroups[0].Rows.Count == 1 && tables[0].RowGroups[1].Rows.Count == 2,
+            $"Expected 1 rendered FlowDocument Table with 1 header row and 2 body rows, got {tables.Length}.");
+
+        var plainText = new TextRange(doc.ContentStart, doc.ContentEnd).Text;
+        Require(plainText.Contains("第 5.8 节", StringComparison.Ordinal) &&
+            plainText.Contains("附录 O", StringComparison.Ordinal) &&
+            !plainText.Contains("相关章节", StringComparison.Ordinal) &&
+            !plainText.Contains("相关条文", StringComparison.Ordinal) &&
+            plainText.Contains("λ ≤ 150", StringComparison.Ordinal) &&
+            plainText.Contains("σₘₐₓ ≤ [σ]", StringComparison.Ordinal) &&
+            plainText.Contains("(σₓₘₐₓ / [σₓᵣ])²", StringComparison.Ordinal) &&
+            plainText.Contains("〔依据 1〕", StringComparison.Ordinal) &&
+            !plainText.Contains(@"\frac", StringComparison.Ordinal) &&
+            !plainText.Contains(@"\left", StringComparison.Ordinal) &&
+            !plainText.Contains("|---|", StringComparison.Ordinal),
+            "Rendered FlowDocument lost verified clause text, failed Chinese-adjacent/display formula formatting, or left raw table separators: " + plainText);
+    }
+    catch (Exception ex)
+    {
+        staError = ex;
+    }
+});
+staThread.SetApartmentState(ApartmentState.STA);
+staThread.Start();
+staThread.Join();
+if (staError is not null) throw new InvalidOperationException("STA FlowDocument check failed.", staError);
+
+// Verify LocalKnowledgeEvidenceSelector retains indented multi-line formulas under bullets AND trailing Markdown tables
+var strengthSearch = kbSearch.Search("式 32 局部压应力 复合应力");
+var strengthSelected = LocalKnowledgeEvidenceSelector.Select("式 32 局部压应力 复合应力", strengthSearch.Hits, LocalKnowledgeChatService.MaxFragmentCharacters);
+var strengthEvidence = strengthSelected.FirstOrDefault(s => s.Source.SourceDocument == "verified/01_main_girder_strength.md");
+Require(strengthEvidence is not null &&
+    strengthEvidence.Text.Contains("sqrt(σ² + σ_m² - σ·σ_m + 3τ²) ≤ [σ]", StringComparison.Ordinal),
+    "Evidence selector dropped indented formula line under bullet in 01_main_girder_strength.md: " + strengthEvidence?.Text);
+
+var thicknessSearch = kbSearch.Search("闭口截面 最小厚度 表 34");
+var thicknessSelected = LocalKnowledgeEvidenceSelector.Select("闭口截面 最小厚度 表 34", thicknessSearch.Hits, LocalKnowledgeChatService.MaxFragmentCharacters);
+var thicknessEvidence = thicknessSelected.FirstOrDefault(s => s.Source.SourceDocument == "verified/13_structural_detailing_and_minimum_thickness.md");
+Require(thicknessEvidence is not null &&
+    thicknessEvidence.Text.Contains("| 中等 |", StringComparison.Ordinal) &&
+    thicknessEvidence.Text.Contains("**4**", StringComparison.Ordinal),
+    "Evidence selector dropped Markdown table in 13_structural_detailing_and_minimum_thickness.md: " + thicknessEvidence?.Text);
+
+Console.WriteLine("PASS formula typography, Markdown Table rendering, visible verified clauses, and multi-line formula/table evidence selection");
+
+// 4. True dynamic extensibility: drop a brand-new folder + Markdown doc at runtime -> auto-discovered & indexed without code changes!
+var dynamicPackDir = Path.Combine(AppContext.BaseDirectory, "KnowledgeBase", "Dynamic_Test_Pack");
+try
+{
+    Directory.CreateDirectory(dynamicPackDir);
+    File.WriteAllText(
+        Path.Combine(dynamicPackDir, "custom_boundary_note.md"),
+        """
+        # 自定义企业检查车焊缝探伤补充边界
+
+        Source: Q/SL-2026
+        Topic: 企业检查车焊缝探伤补充边界
+        Clause: 4.2
+
+        ## 适用范围
+
+        本补充资料规定企业内部特有超长悬臂检查车关键折线法兰焊缝采用 100% 超声波探伤与磁粉复检。
+        """,
+        Encoding.UTF8);
+
+    var dynamicSearch = kbSearch.Search("Q/SL-2026 超长悬臂检查车 折线法兰 磁粉复检");
+    Require(!dynamicSearch.HasError &&
+        dynamicSearch.Hits.Any(h => h.SourceDocument == "Dynamic_Test_Pack/custom_boundary_note.md" &&
+                                    h.Standard == "Q/SL-2026"),
+        "Dynamically dropped Markdown pack was not auto-discovered and indexed at runtime.");
+}
+finally
+{
+    if (Directory.Exists(dynamicPackDir))
+    {
+        Directory.Delete(dynamicPackDir, recursive: true);
+    }
+}
+
+var postCleanupSearch = kbSearch.Search("Q/SL-2026 磁粉复检");
+Require(!postCleanupSearch.HasError &&
+    !postCleanupSearch.Hits.Any(h => h.SourceDocument == "Dynamic_Test_Pack/custom_boundary_note.md"),
+    "Removed dynamic pack still lingered in stale RAG index.");
+Console.WriteLine("PASS extensible multi-standard knowledge base (GB/T 3811 + JT/T 1430 + GB 50017 + live dynamic drop-in auto-indexing)");
+
+// =========================================================================
+// Phase 2 Checks: Model-Anchored Multi-Standard Design Boundary Integration
+// 1) Externalized Config/design-boundary-profile.json loading
+// 2) Deterministic model-anchored three-standard section evaluation
+// 3) Updated RAG routing triggers (without standard code) & model-anchored design routing
+// 4) Main design advisor live-model + candidate + wall-only three-standard guidance
+// 5) Pre-confirmation CAD edit boundary advisories (non-blocking & disclosure-safe)
+// =========================================================================
+var boundaryProfilePath = DesignBoundaryProfileLoader.ResolveProfilePath();
+Require(!string.IsNullOrWhiteSpace(boundaryProfilePath) && File.Exists(boundaryProfilePath),
+    "Externalized Config/design-boundary-profile.json was not copied/resolved.");
+var loadedProfile = DesignBoundaryProfileLoader.Load();
+Require(loadedProfile.Vehicle.CantileverLengthMm == 7350m &&
+    loadedProfile.Vehicle.MaterialGrade == "Q355B" &&
+    loadedProfile.GbT3811.ClosedSectionMinWallModerateMm == 4.0m &&
+    loadedProfile.JtT1430.SteelCantileverDeflectionDivisor == 400 &&
+    loadedProfile.Gb50017.AxialCompressionLocalStabilityFactor == 40.0m,
+    "Loaded design-boundary-profile.json values mismatch.");
+
+var baseEval = DesignBoundaryEvaluationService.EvaluateMemberSection(
+    70m, 70m, 5m, DesignBoundaryMemberRole.UpperChord,
+    MemberSectionSpecRecord.CreateBaseline("upper_chord", "上弦杆"), loadedProfile);
+Require(!baseEval.HasBoundaryWarning &&
+    baseEval.SectionWidthThicknessClass == "S1 级" &&
+    baseEval.NetFlatWidthThicknessRatio == 12.0m &&
+    baseEval.OuterWidthThicknessRatio == 14.0m &&
+    baseEval.CorrosionWallRisk == DesignBoundaryRiskLevel.Ok,
+    "Baseline 70x70x5 UpperChord boundary evaluation mismatch.");
+
+var thinLowerEval = DesignBoundaryEvaluationService.EvaluateMemberSection(
+    60m, 60m, 3m, DesignBoundaryMemberRole.LowerChord,
+    MemberSectionSpecRecord.CreateBaseline("lower_chord", "下弦杆"), loadedProfile);
+Require(thinLowerEval.HasBoundaryWarning &&
+    thinLowerEval.CorrosionWallRisk == DesignBoundaryRiskLevel.Warning &&
+    thinLowerEval.CorrosionWallSummary.Contains("表34", StringComparison.Ordinal) &&
+    thinLowerEval.ModelLinkageSummary.Contains("13.2.1", StringComparison.Ordinal) &&
+    thinLowerEval.SimulationChecklistSummary.Contains("150", StringComparison.Ordinal) &&
+    thinLowerEval.SimulationChecklistSummary.Contains("18.4 mm", StringComparison.Ordinal),
+    "60x60x3 LowerChord boundary evaluation missed table-34 corrosion warning or lower-chord compression checklist.");
+
+var slenderEval = DesignBoundaryEvaluationService.EvaluateMemberSection(
+    120m, 120m, 3m, DesignBoundaryMemberRole.LowerChord,
+    MemberSectionSpecRecord.CreateBaseline("lower_chord", "下弦杆"), loadedProfile);
+Require(slenderEval.HasBoundaryWarning &&
+    slenderEval.ExceedsAxialLocalBucklingLimit &&
+    slenderEval.ExceedsTubeJointOuterRatioLimit &&
+    slenderEval.SectionWidthThicknessClass.Contains("S5", StringComparison.Ordinal),
+    "120x120x3 slender box section must flag GB 50017 local buckling & tube-joint outer ratio warnings.");
+
+var wallOnlyEval = DesignBoundaryEvaluationService.EvaluateMemberSection(
+    70m, 70m, 4m, DesignBoundaryMemberRole.LowerChord,
+    MemberSectionSpecRecord.CreateBaseline("lower_chord", "下弦杆"), loadedProfile);
+Require(!wallOnlyEval.HasBoundaryWarning &&
+    wallOnlyEval.ModelLinkageSummary.Contains("仅调整壁厚", StringComparison.Ordinal) &&
+    wallOnlyEval.CorrosionWallRisk == DesignBoundaryRiskLevel.Ok,
+    "70x70x4 wall-only adjustment should preserve outer geometry and meet Table 34 moderate corrosion >= 4 mm.");
+
+// New RAG trigger keywords without explicit standard codes must route to RAG
+foreach (var pureNormQuery in new[]
+{
+    "车轮允许轮压怎么算？",
+    "闭口方管最小壁厚是多少？",
+    "静载试验和动载试验载荷系数怎么取？",
+    "钢材抗脆断质量组别怎么选？"
+})
+{
+    Require(ChatTurnRouter.ShouldRouteToKnowledgeChat(
+            pureNormQuery, pureNormQuery, false, false, false, false, false, false, [], null),
+        "Updated strong normative query did not route to RAG: " + pureNormQuery);
+}
+
+// Model-anchored design evaluations stay on main design advisor even when mentioning stiffness/deflection/wall thickness
+foreach (var modelEvalQuery in new[]
+{
+    "把上弦杆改成 80x80x4，刚度和挠度怎么样？",
+    "下弦杆壁厚减到 3 mm 行不行？",
+    "我这台车的上弦杆最小壁厚改成 3 合适吗？"
+})
+{
+    Require(!ChatTurnRouter.ShouldRouteToKnowledgeChat(
+            modelEvalQuery, modelEvalQuery, false, false, false, false, false, false, [], null),
+        "Model-anchored design evaluation was mistakenly diverted to RAG away from live model context: " + modelEvalQuery);
+}
+
+// Explicit standard compliance queries MUST still route to RAG
+Require(ChatTurnRouter.ShouldRouteToKnowledgeChat(
+        "按 GB/T 3811-2008，上弦杆截面改成 60×60 是否符合要求？",
+        "按GB/T3811-2008上弦杆截面改成60×60是否符合要求",
+        false, false, false, false, false, false, [], null),
+    "Explicit standard compliance question stopped routing to RAG.");
+
+// End-to-end main design advisor checks (using vm where upper chord is already modified to 60x60x5!)
+await SendAsync(vm, "把上弦杆改成 80x80x4，刚度和挠度怎么样？");
+var modelBoundSummary = llm.LastOptions?.RuntimeContextSummary ?? string.Empty;
+Require(llm.LastOptions?.ReplyOnlyMode == true &&
+    modelBoundSummary.Contains("当前上弦杆（60×60×5 mm", StringComparison.Ordinal) &&
+    modelBoundSummary.Contains("80×80×4", StringComparison.Ordinal) &&
+    modelBoundSummary.Contains("1270 mm", StringComparison.Ordinal) &&
+    modelBoundSummary.Contains("表34", StringComparison.Ordinal) &&
+    modelBoundSummary.Contains("表3.5.1", StringComparison.Ordinal) &&
+    modelBoundSummary.Contains("18.4 mm", StringComparison.Ordinal) &&
+    !modelBoundSummary.Contains("减重 -6.5%", StringComparison.Ordinal),
+    "Model-anchored design advisor missed live model dimensions or concrete three-standard boundaries: " + modelBoundSummary);
+rejectLegacy.Invoke(null, new object?[] { llm.DesignRequests.Last().History, modelBoundSummary });
+
+await SendAsync(vm, "下弦杆壁厚减到 3 mm 行不行？");
+var wallConsultSummary = llm.LastOptions?.RuntimeContextSummary ?? string.Empty;
+Require(llm.LastOptions?.ReplyOnlyMode == true &&
+    wallConsultSummary.Contains("70×70×3", StringComparison.Ordinal) &&
+    wallConsultSummary.Contains("低于 GB/T 3811-2008 表34", StringComparison.Ordinal) &&
+    wallConsultSummary.Contains("仅调整壁厚", StringComparison.Ordinal) &&
+    wallConsultSummary.Contains("受压长细比 ≤150", StringComparison.Ordinal),
+    "Standalone wall-thickness consultation did not anchor to active model lower chord (70x70) and Table 34 warning: " + wallConsultSummary);
+rejectLegacy.Invoke(null, new object?[] { llm.DesignRequests.Last().History, wallConsultSummary });
+
+// End-to-end CAD pre-confirmation boundary advisory checks (non-blocking & disclosure-safe)
+var cadUpdatesBeforePhase2 = cad.Updates.Count;
+var thinUpperPending = await SendAsync(vm, "把上弦杆改成 60x60x3");
+Require(thinUpperPending.Text.Contains("待确认修改", StringComparison.Ordinal) &&
+    thinUpperPending.Text.Contains("含规范风险提示", StringComparison.Ordinal) &&
+    thinUpperPending.Text.Contains("仅调整壁厚", StringComparison.Ordinal) &&
+    thinUpperPending.Text.Contains("表34", StringComparison.Ordinal) &&
+    thinUpperPending.Text.Contains("1290 mm", StringComparison.Ordinal) &&
+    thinUpperPending.Text.Contains("18.4 mm", StringComparison.Ordinal) &&
+    cad.Updates.Count == cadUpdatesBeforePhase2 &&
+    vm.ConfirmBusinessCommand.CanExecute(null),
+    "Pre-confirmation CAD edit did not surface model-anchored three-standard advisory or blocked confirmation: " + thinUpperPending.Text);
+rejectLegacy.Invoke(null, new object?[] { llm.DesignRequests.Last().History, thinUpperPending.Text });
+await SendAsync(vm, "取消");
+
+var widerUpperPending = await SendAsync(vm, "把上弦杆改成 80x80x3");
+Require(widerUpperPending.Text.Contains("待确认修改", StringComparison.Ordinal) &&
+    widerUpperPending.Text.Contains("自动补偿至 1270 mm", StringComparison.Ordinal) &&
+    widerUpperPending.Text.Contains("1260 / 1190 mm", StringComparison.Ordinal) &&
+    widerUpperPending.Text.Contains("表34", StringComparison.Ordinal) &&
+    cad.Updates.Count == cadUpdatesBeforePhase2 &&
+    vm.ConfirmBusinessCommand.CanExecute(null),
+    "Outer-width changing CAD pre-confirmation did not surface linked red-tube compensation + walkway clearance: " + widerUpperPending.Text);
+await SendAsync(vm, "取消");
+
+var thinLowerWallPending = await SendAsync(vm, "把下弦杆壁厚改成 3");
+Require(thinLowerWallPending.Text.Contains("待确认修改", StringComparison.Ordinal) &&
+    thinLowerWallPending.Text.Contains("70×70×3 mm", StringComparison.Ordinal) &&
+    thinLowerWallPending.Text.Contains("仅调整壁厚", StringComparison.Ordinal) &&
+    thinLowerWallPending.Text.Contains("表34", StringComparison.Ordinal) &&
+    thinLowerWallPending.Text.Contains("受压长细比 ≤150", StringComparison.Ordinal) &&
+    cad.Updates.Count == cadUpdatesBeforePhase2 &&
+    vm.ConfirmBusinessCommand.CanExecute(null),
+    "Wall-only CAD pre-confirmation advisory did not combine active lower chord 70x70 with Table 34 & compression checklist: " + thinLowerWallPending.Text);
+await SendAsync(vm, "取消");
+
+Console.WriteLine("PASS Phase 2 model-anchored three-standard design boundaries, updated RAG triggers, and CAD pre-confirmation advisories");
+
+// =========================================================================
+// Plan A Checks: Live Workbench Welcome Dashboard, 2x2 Scenario Cards & Chief-Engineer Greeting
+// =========================================================================
+await vm3.CreateProjectCommand.ExecuteAsync();
+Require(vm3.ShowWelcomeDashboard && !vm3.ShowChatMessageStream,
+    "Fresh V0 project must show the live workbench welcome dashboard before the user's first message.");
+var dashV0 = vm3.WelcomeDashboard;
+Require(dashV0.ModelCodeBadge.Contains("JC-GD-NG", StringComparison.Ordinal) &&
+    dashV0.UpperChord.SpecText == "70×70×5 mm" &&
+    dashV0.LowerChord.SpecText == "70×70×5 mm" &&
+    !dashV0.UpperChord.HasWarning &&
+    dashV0.RedlineItems.Any(r => r.Contains("18.4 mm", StringComparison.Ordinal)) &&
+    dashV0.KbStatusText.Contains("规范", StringComparison.Ordinal) &&
+    dashV0.ScenarioCards.Count == 4,
+    "V0 welcome dashboard snapshot missing live model/standard metrics or 4 scenario cards.");
+
+// Verify every scenario card routes to its intended pipeline
+var cardConsult = dashV0.ScenarioCards[0];
+var cardRag = dashV0.ScenarioCards[2];
+Require(!ChatTurnRouter.ShouldRouteToKnowledgeChat(
+        cardConsult.Prompt, cardConsult.Prompt, false, false, false, false, false, false, [], null),
+    "Scenario Card 1 (model+standard consultation) was mistakenly diverted to RAG: " + cardConsult.Prompt);
+Require(ChatTurnRouter.ShouldRouteToKnowledgeChat(
+        cardRag.Prompt, cardRag.Prompt, false, false, false, false, false, false, [], null),
+    "Scenario Card 3 (cross-standard formula lookup) did not route to RAG: " + cardRag.Prompt);
+
+// Verify welcome anchor text is concise (no stale manual paragraph)
+Require(!vm3.ChatMessages[0].Text.Contains("您好，我是桥梁检查车智能设计助手", StringComparison.Ordinal) &&
+    vm3.ChatMessages[0].Text.Contains("JC-GD-NG", StringComparison.Ordinal),
+    "Welcome anchor message still contains legacy boilerplate: " + vm3.ChatMessages[0].Text);
+
+// Clicking/sending Scenario Card 1 on fresh V0 switches to chat stream & passes live model+standard context
+await SendAsync(vm3, cardConsult.Prompt);
+Require(!vm3.ShowWelcomeDashboard && vm3.ShowChatMessageStream &&
+    (llm.LastOptions?.RuntimeContextSummary?.Contains("表34", StringComparison.Ordinal) ?? false) &&
+    (llm.LastOptions?.RuntimeContextSummary?.Contains("80×80×4", StringComparison.Ordinal) ?? false),
+    "Scenario Card 1 did not switch cleanly to chat stream with live model + three-standard context.");
+
+// On iterated V1 project (vm1), creating a fresh follow-up conversation displays V1 live snapshot + follow-up banner
+await vm1.CreateNewConversationCommand.ExecuteAsync();
+Require(vm1.ShowWelcomeDashboard &&
+    vm1.WelcomeDashboard.VersionTag == "V1" &&
+    vm1.WelcomeDashboard.HasFollowUpNote &&
+    vm1.WelcomeDashboard.UpperChord.SpecText == "60×60×5 mm" &&
+    vm1.WelcomeDashboard.UpperChord.Line1.Contains("1290 mm", StringComparison.Ordinal),
+    "Iterated V1 follow-up conversation welcome dashboard did not reflect 60x60x5 and 1290 mm linked red tube.");
+
+// Sending first message in that conversation switches cleanly from Welcome Dashboard to Chat Stream
+await SendAsync(vm1, "你好");
+Require(!vm1.ShowWelcomeDashboard && vm1.ShowChatMessageStream,
+    "Welcome dashboard did not switch to chat message stream after the user's first message.");
+Console.WriteLine("PASS Plan A live workbench welcome dashboard, 2x2 scenario cards routing, V1 follow-up sync, and chief-engineer greeting transition");
+
 if (args.Contains("--live-apdl", StringComparer.Ordinal))
 {
     Require(configuredLlmOptions.Mode == "Cloud" && configuredLlmOptions.Model == "gpt-6.1-sol",
@@ -660,6 +1181,7 @@ sealed class FakeLlm : ILlmService
     public string KnowledgeAnswer { get; set; } = "请参考安全系数资料 [E1]。";
     public bool ForceApdlAction { get; set; }
     public bool ForceMixedApdlAction { get; set; }
+    public string? CustomDesignReply { get; set; }
     public LlmChatRequestOptions? LastOptions { get; private set; }
 
     public Task<string> ParseDesignRequirementAsync(string userInput, IReadOnlyList<ConversationMessage>? history = null,
@@ -667,11 +1189,13 @@ sealed class FakeLlm : ILlmService
     {
         DesignRequests.Add((userInput, history?.ToArray() ?? []));
         LastOptions = options;
-        var answer = ForceMixedApdlAction
+        var answer = !string.IsNullOrWhiteSpace(CustomDesignReply)
+            ? CustomDesignReply
+            : ForceMixedApdlAction
             ? """{"reply":"正在打开并修改 CAD。","actions":["open_apdl_launcher","update_solidworks_dimensions"],"commands":["open_apdl_launcher","update_solidworks_dimensions"],"parameters":[],"needConfirmation":false,"questions":[]}"""
             : ForceApdlAction || (options?.AllowApdlLauncherAction == true && ApdlLaunchIntentPolicy.IsCandidate(userInput))
             ? """{"reply":"正在打开 ANSYS APDL。","actions":["open_apdl_launcher"],"commands":["open_apdl_launcher"],"parameters":[],"needConfirmation":false,"questions":[]}"""
-            : userInput == "打开当前模型" && options?.ReplyOnlyMode != true
+            : (userInput == "打开当前模型" || userInput.Contains("打开模型", StringComparison.Ordinal)) && options?.ReplyOnlyMode != true
             ? """{"reply":"","actions":["open_working_model"],"commands":[],"parameters":[],"needConfirmation":false,"questions":[]}"""
             : userInput == "能帮我查一下可编辑参数吗？" && options?.ReplyOnlyMode != true
             ? """{"reply":"","actions":["query_editable_parameters"],"commands":["query_editable_parameters"],"parameters":[],"needConfirmation":false,"questions":[]}"""

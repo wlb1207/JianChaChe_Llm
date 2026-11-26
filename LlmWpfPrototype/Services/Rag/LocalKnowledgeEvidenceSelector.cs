@@ -78,10 +78,10 @@ public static class LocalKnowledgeEvidenceSelector
                 var normalized=Normalize(body);
                 var coverage=terms.Count(t=>normalized.Contains(t,StringComparison.OrdinalIgnoreCase));
                 var headingMatch=terms.Any(t=>Normalize(b.Heading).Contains(t,StringComparison.OrdinalIgnoreCase));
-                var contextualFormula=headingMatch && (body.Contains(@"\[") || body.Contains(@"\leq") || body.Contains('≤'));
+                var contextualFormula=headingMatch && (body.Contains(@"\[") || body.Contains("$$") || body.Contains(@"\leq") || body.Contains('≤') || body.Contains('≥') || body.Contains("\n|"));
                 if(coverage==0 && !contextualFormula) continue;
                 // A directly matched subsection may travel whole; a broad parent section contributes
-                // only matching paragraphs/bullets and their formula/definition continuations.
+                // only matching paragraphs/bullets and their formula/definition/table continuations.
                 if(headingMatch && b.Length<=limit)
                 {
                     choices.Add(new(b.Start,b.Length,b.Path,coverage,Notice(b.Heading),true,false));
@@ -90,7 +90,8 @@ public static class LocalKnowledgeEvidenceSelector
                 var units=Regex.Matches(body,@"(?s)\S.*?(?=\r?\n[ \t]*\r?\n|\z)").Cast<Match>().ToList();
                 foreach(var unit in units)
                 {
-                    var lines=Regex.Matches(unit.Value,@"(?m)^[ \t]*(?:[-*•]|\d+[.)])[ \t]+[^\r\n]*").Cast<Match>().ToList();
+                    // Capture bullet items together with any indented continuation lines (e.g. multi-line formulas).
+                    var lines=Regex.Matches(unit.Value,@"(?m)^[ \t]*(?:[-*•]|\d+[.)])[ \t]+[^\r\n]*(?:\r?\n(?![ \t]*(?:[-*•]|\d+[.)])[ \t]+)[ \t]+\S[^\r\n]*)*").Cast<Match>().ToList();
                     if(lines.Count>1)
                     {
                         foreach(var line in lines)
@@ -104,7 +105,10 @@ public static class LocalKnowledgeEvidenceSelector
                     }
                     if(!terms.Any(t=>Normalize(unit.Value).Contains(t,StringComparison.OrdinalIgnoreCase))) continue;
                     var unitIndex=units.IndexOf(unit);var last=unitIndex;
-                    while(last+1<units.Count && Regex.IsMatch(units[last+1].Value,@"^([\-•]|其中|式中|条件|适用|常用|基本|\\\[)|\\frac|\\leq")) last++;
+                    while(last+1<units.Count
+                        && units[last+1].Index+units[last+1].Length-unit.Index<=limit
+                        && Regex.IsMatch(units[last+1].Value,@"^(?:[\-•|>]|注[\d：:]|参数说明|其中|式中|条件|适用|常用|基本|\\\[|\$\$)|\\frac|\\leq|\\geq|[≤≥]|sqrt\("))
+                        last++;
                     var lastUnit=units[last];var absoluteStart=b.BodyStart+unit.Index;
                     var length=lastUnit.Index+lastUnit.Length-unit.Index;
                     if(length<=limit) choices.Add(new(absoluteStart,length,b.Path,

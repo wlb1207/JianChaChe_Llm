@@ -106,6 +106,45 @@
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Foreground" Value="#FF64748B" />
         </Style>
+
+        <Style x:Key="ScenarioTaskCardButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFFFF" />
+            <Setter Property="BorderBrush" Value="#FFE2E8F0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="15,13" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="CardBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="11"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CardBorder" Property="Background" Value="#FFF0F9FF" />
+                                <Setter TargetName="CardBorder" Property="BorderBrush" Value="#FF38BDF8" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="CardBorder" Property="Background" Value="#FFE0F2FE" />
+                                <Setter TargetName="CardBorder" Property="BorderBrush" Value="#FF0284C7" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="14">
@@ -757,7 +796,396 @@
                                   VerticalScrollBarVisibility="Auto"
                                   ScrollChanged="ChatScrollViewer_ScrollChanged">
                         <StackPanel>
+                            <!-- 方案 A：新对话开屏「本车智能设计简报卡 + 2×2 场景化工程任务卡」（发送首条消息后自动切换为对话流） -->
+                            <StackPanel Visibility="{Binding ShowWelcomeDashboard, Converter={StaticResource BoolToVis}}"
+                                        MaxWidth="980"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="2,4,2,8">
+                                <!-- 1. 本车智能设计简报主卡片 -->
+                                <Border CornerRadius="13"
+                                        BorderBrush="#FFBAE6FD"
+                                        BorderThickness="1"
+                                        Padding="20,18">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#FFF0F9FF" Offset="0" />
+                                            <GradientStop Color="#FFFFFFFF" Offset="0.55" />
+                                            <GradientStop Color="#FFF8FAFC" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <StackPanel>
+                                        <!-- 顶部标题 + 引擎就绪徽章 -->
+                                        <DockPanel LastChildFill="True">
+                                            <WrapPanel DockPanel.Dock="Right"
+                                                       VerticalAlignment="Top"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="12,0,0,0">
+                                                <!-- 三规范知识库就绪徽章 -->
+                                                <Border Margin="0,0,6,6"
+                                                        Padding="9,4"
+                                                        CornerRadius="12"
+                                                        Background="#FFECFDF5"
+                                                        BorderBrush="#FFA7F3D0"
+                                                        BorderThickness="1">
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Ellipse Width="6.5" Height="6.5" Fill="#FF059669" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                        <TextBlock FontSize="11.5"
+                                                                   FontWeight="Medium"
+                                                                   Foreground="#FF047857"
+                                                                   Text="{Binding WelcomeDashboard.KbStatusText}" />
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- SolidWorks 状态徽章 -->
+                                                <Border Margin="0,0,6,6"
+                                                        Padding="9,4"
+                                                        CornerRadius="12"
+                                                        BorderThickness="1">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Background" Value="#FFF1F5F9" />
+                                                            <Setter Property="BorderBrush" Value="#FFCBD5E1" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding WelcomeDashboard.IsSolidWorksOpened}" Value="True">
+                                                                    <Setter Property="Background" Value="#FFE0F2FE" />
+                                                                    <Setter Property="BorderBrush" Value="#FF7DD3FC" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Ellipse Width="6.5" Height="6.5" Margin="0,0,5,0" VerticalAlignment="Center">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="Ellipse">
+                                                                    <Setter Property="Fill" Value="#FF64748B" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.IsSolidWorksOpened}" Value="True">
+                                                                            <Setter Property="Fill" Value="#FF0284C7" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                        <TextBlock FontSize="11.5"
+                                                                   FontWeight="Medium"
+                                                                   Foreground="#FF334155"
+                                                                   Text="{Binding WelcomeDashboard.SolidWorksStatusText}" />
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- ANSYS APDL 状态徽章 -->
+                                                <Border Margin="0,0,0,6"
+                                                        Padding="9,4"
+                                                        CornerRadius="12"
+                                                        BorderThickness="1">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Background" Value="#FFF8FAFC" />
+                                                            <Setter Property="BorderBrush" Value="#FFE2E8F0" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlReady}" Value="True">
+                                                                    <Setter Property="Background" Value="#FFECFDF5" />
+                                                                    <Setter Property="BorderBrush" Value="#FFA7F3D0" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Ellipse Width="6.5" Height="6.5" Margin="0,0,5,0" VerticalAlignment="Center">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="Ellipse">
+                                                                    <Setter Property="Fill" Value="#FF94A3B8" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlReady}" Value="True">
+                                                                            <Setter Property="Fill" Value="#FF059669" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                        <TextBlock FontSize="11.5"
+                                                                   FontWeight="Medium"
+                                                                   Foreground="#FF334155"
+                                                                   Text="{Binding WelcomeDashboard.ApdlStatusText}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </WrapPanel>
+
+                                            <StackPanel>
+                                                <WrapPanel VerticalAlignment="Center">
+                                                    <Border Padding="8,2.5"
+                                                            Margin="0,0,8,4"
+                                                            CornerRadius="6"
+                                                            Background="#FF0284C7">
+                                                        <TextBlock FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="White"
+                                                                   Text="{Binding WelcomeDashboard.ModelCodeBadge}" />
+                                                    </Border>
+                                                    <TextBlock FontSize="17"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FF0F172A"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,8,4"
+                                                               Text="{Binding WelcomeDashboard.ProjectName}" />
+                                                    <Border Padding="7,2"
+                                                            Margin="0,0,0,4"
+                                                            CornerRadius="6"
+                                                            Background="#FFE0F2FE"
+                                                            BorderBrush="#FF7DD3FC"
+                                                            BorderThickness="1">
+                                                        <TextBlock FontSize="11.5"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#FF0369A1"
+                                                                   Text="{Binding WelcomeDashboard.VersionTag}" />
+                                                    </Border>
+                                                </WrapPanel>
+                                                <TextBlock Margin="0,3,0,0"
+                                                           FontSize="12.5"
+                                                           Foreground="#FF475569"
+                                                           TextWrapping="Wrap"
+                                                           Text="{Binding WelcomeDashboard.VehicleSubtitle}" />
+                                            </StackPanel>
+                                        </DockPanel>
+
+                                        <!-- 迭代/跟进衔接提示（仅 V1+ 或跟进对话展示） -->
+                                        <Border Margin="0,10,0,0"
+                                                Padding="11,7"
+                                                CornerRadius="8"
+                                                Background="#FFEFF6FF"
+                                                BorderBrush="#FFBFDBFE"
+                                                BorderThickness="1"
+                                                Visibility="{Binding WelcomeDashboard.HasFollowUpNote, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock FontSize="12"
+                                                       Foreground="#FF1D4ED8"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding WelcomeDashboard.FollowUpNote}" />
+                                        </Border>
+
+                                        <!-- 中部：上/下弦杆实时截面与规范体检双卡 -->
+                                        <Grid Margin="0,14,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- 上弦杆实时卡 -->
+                                            <Border Grid.Column="0"
+                                                    Background="White"
+                                                    BorderBrush="#FFE2E8F0"
+                                                    BorderThickness="1"
+                                                    CornerRadius="10"
+                                                    Padding="14,11">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <Border DockPanel.Dock="Right"
+                                                                Padding="7,2"
+                                                                CornerRadius="10"
+                                                                VerticalAlignment="Center">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#FFECFDF5" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.UpperChord.HasWarning}" Value="True">
+                                                                            <Setter Property="Background" Value="#FFFEF3C7" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding WelcomeDashboard.UpperChord.StatusBadgeText}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#FF047857" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding WelcomeDashboard.UpperChord.HasWarning}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#FFB45309" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Border>
+                                                        <TextBlock FontSize="12"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#FF475569"
+                                                                   VerticalAlignment="Center"
+                                                                   Text="{Binding WelcomeDashboard.UpperChord.RoleTitle}" />
+                                                    </DockPanel>
+                                                    <TextBlock Margin="0,6,0,4"
+                                                               FontSize="18"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FF0F172A"
+                                                               Text="{Binding WelcomeDashboard.UpperChord.SpecText}" />
+                                                    <TextBlock FontSize="11.5"
+                                                               Foreground="#FF475569"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding WelcomeDashboard.UpperChord.Line1}" />
+                                                    <TextBlock Margin="0,2,0,0"
+                                                               FontSize="11.5"
+                                                               Foreground="#FF64748B"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding WelcomeDashboard.UpperChord.Line2}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- 下弦杆实时卡 -->
+                                            <Border Grid.Column="2"
+                                                    Background="White"
+                                                    BorderBrush="#FFE2E8F0"
+                                                    BorderThickness="1"
+                                                    CornerRadius="10"
+                                                    Padding="14,11">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <Border DockPanel.Dock="Right"
+                                                                Padding="7,2"
+                                                                CornerRadius="10"
+                                                                VerticalAlignment="Center">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#FFECFDF5" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.LowerChord.HasWarning}" Value="True">
+                                                                            <Setter Property="Background" Value="#FFFEF3C7" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding WelcomeDashboard.LowerChord.StatusBadgeText}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#FF047857" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding WelcomeDashboard.LowerChord.HasWarning}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#FFB45309" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Border>
+                                                        <TextBlock FontSize="12"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#FF475569"
+                                                                   VerticalAlignment="Center"
+                                                                   Text="{Binding WelcomeDashboard.LowerChord.RoleTitle}" />
+                                                    </DockPanel>
+                                                    <TextBlock Margin="0,6,0,4"
+                                                               FontSize="18"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FF0F172A"
+                                                               Text="{Binding WelcomeDashboard.LowerChord.SpecText}" />
+                                                    <TextBlock FontSize="11.5"
+                                                               Foreground="#FF475569"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding WelcomeDashboard.LowerChord.Line1}" />
+                                                    <TextBlock Margin="0,2,0,0"
+                                                               FontSize="11.5"
+                                                               Foreground="#FF64748B"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding WelcomeDashboard.LowerChord.Line2}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+
+                                        <!-- 底部：绑定本车的三规范核心控制红线条 -->
+                                        <Border Margin="0,12,0,0"
+                                                Padding="12,8"
+                                                CornerRadius="9"
+                                                Background="#FFF8FAFC"
+                                                BorderBrush="#FFE2E8F0"
+                                                BorderThickness="1">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Left"
+                                                           Margin="0,3,10,0"
+                                                           FontSize="11.5"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#FF334155"
+                                                           VerticalAlignment="Top"
+                                                           Text="本车核心边界红线" />
+                                                <ItemsControl ItemsSource="{Binding WelcomeDashboard.RedlineItems}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Margin="0,2,8,2"
+                                                                    Padding="8,2.5"
+                                                                    CornerRadius="6"
+                                                                    Background="White"
+                                                                    BorderBrush="#FFE2E8F0"
+                                                                    BorderThickness="1">
+                                                                <TextBlock FontSize="11.5"
+                                                                           Foreground="#FF475569"
+                                                                           Text="{Binding}" />
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </DockPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 2. 2×2 场景化工程任务卡片 -->
+                                <TextBlock Margin="4,16,0,9"
+                                           FontSize="12.5"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF64748B"
+                                           Text="选择典型工程场景直接开始，或在下方输入您的设计意图：" />
+
+                                <ItemsControl ItemsSource="{Binding WelcomeDashboard.ScenarioCards}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="2" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:WelcomeScenarioCardItem}">
+                                            <Button Margin="0,0,10,10"
+                                                    Style="{StaticResource ScenarioTaskCardButtonStyle}"
+                                                    Command="{Binding DataContext.SendQuickPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding Prompt}">
+                                                <StackPanel>
+                                                    <Border HorizontalAlignment="Left"
+                                                            Padding="8,2.5"
+                                                            CornerRadius="6"
+                                                            Background="{Binding TagBackgroundHex}">
+                                                        <TextBlock FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="{Binding TagForegroundHex}"
+                                                                   Text="{Binding Tag}" />
+                                                    </Border>
+                                                    <TextBlock Margin="0,8,0,4"
+                                                               FontSize="14"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#FF0F172A"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding Title}" />
+                                                    <TextBlock FontSize="12"
+                                                               Foreground="#FF64748B"
+                                                               LineHeight="18"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding Description}" />
+                                                    <TextBlock Margin="0,8,0,0"
+                                                               FontSize="11.5"
+                                                               FontWeight="Medium"
+                                                               Foreground="#FF0284C7"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Text="{Binding ActionCue}" />
+                                                </StackPanel>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <!-- 正常多轮对话消息流（用户发送首条消息或点击场景卡片后显示） -->
                             <ItemsControl x:Name="ChatItemsControl"
+                                          Visibility="{Binding ShowChatMessageStream, Converter={StaticResource BoolToVis}}"
                                           ItemsSource="{Binding ChatMessages}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:ChatMessage}">
@@ -865,30 +1293,6 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-
-                            <!-- 新对话欢迎状态：常用快捷提问胶囊（发送首条消息后自动隐藏） -->
-                            <StackPanel Margin="4,4,0,4"
-                                        Visibility="{Binding ShowWelcomeQuickPrompts, Converter={StaticResource BoolToVis}}">
-                                <TextBlock FontSize="12"
-                                           Foreground="#FF94A3B8"
-                                           Margin="2,0,0,8"
-                                           Text="快捷开始：" />
-                                <ItemsControl ItemsSource="{Binding QuickPrompts}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Button Style="{StaticResource QuickPromptPillStyle}"
-                                                    Content="{Binding}"
-                                                    Command="{Binding DataContext.SendQuickPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    CommandParameter="{Binding}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
@@ -1137,37 +1541,50 @@
 
                                 <DockPanel Grid.Row="0"
                                            Margin="0,0,0,10"
-                                           LastChildFill="False">
-                                    <CheckBox x:Name="LogAutoScrollCheckBox"
-                                              Margin="0,0,16,0"
-                                              VerticalAlignment="Center"
-                                              IsChecked="{Binding IsLogAutoScrollEnabled, Mode=TwoWay}"
-                                              Checked="LogAutoScrollCheckBox_Checked"
-                                              Content="自动滚动到底部" />
-                                    <Button Width="100"
-                                            Height="30"
-                                            Margin="0,0,8,0"
-                                            Content="滚动到底部"
-                                            Click="ScrollLogToBottomButton_Click" />
-                                    <Button Width="92"
-                                            Height="30"
-                                            Margin="0,0,8,0"
-                                            Content="清空显示"
-                                            Command="{Binding ClearLogsCommand}" />
-                                    <Button Width="108"
-                                            Height="30"
-                                            Margin="0,0,8,0"
-                                            Content="复制当前日志"
-                                            Command="{Binding CopyCurrentLogsCommand}" />
-                                    <Button Width="116"
-                                            Height="30"
-                                            Margin="0,0,8,0"
-                                            Content="测试 LLM 连接"
-                                            Command="{Binding TestLlmConnectionCommand}" />
-                                    <Button Width="92"
-                                            Height="30"
-                                            Content="导出日志"
-                                            Command="{Binding ExportLogsCommand}" />
+                                           LastChildFill="True">
+                                    <StackPanel DockPanel.Dock="Left"
+                                                Orientation="Horizontal"
+                                                VerticalAlignment="Center">
+                                        <CheckBox x:Name="LogAutoScrollCheckBox"
+                                                  Margin="0,0,16,0"
+                                                  VerticalAlignment="Center"
+                                                  IsChecked="{Binding IsLogAutoScrollEnabled, Mode=TwoWay}"
+                                                  Checked="LogAutoScrollCheckBox_Checked"
+                                                  Content="自动滚动到底部" />
+                                        <Button Width="100"
+                                                Height="30"
+                                                Margin="0,0,8,0"
+                                                Content="滚动到底部"
+                                                Click="ScrollLogToBottomButton_Click" />
+                                        <Button Width="92"
+                                                Height="30"
+                                                Margin="0,0,8,0"
+                                                Content="清空显示"
+                                                Command="{Binding ClearLogsCommand}" />
+                                        <Button Width="108"
+                                                Height="30"
+                                                Margin="0,0,8,0"
+                                                Content="复制当前日志"
+                                                Command="{Binding CopyCurrentLogsCommand}" />
+                                        <Button Width="116"
+                                                Height="30"
+                                                Margin="0,0,8,0"
+                                                Content="测试 LLM 连接"
+                                                Command="{Binding TestLlmConnectionCommand}" />
+                                        <Button Width="92"
+                                                Height="30"
+                                                Margin="0,0,12,0"
+                                                Content="导出日志"
+                                                ToolTip="弹出保存对话框导出当前对话的 .txt 日志，并同步复制到剪贴板"
+                                                Command="{Binding ExportLogsCommand}" />
+                                    </StackPanel>
+                                    <TextBlock VerticalAlignment="Center"
+                                               HorizontalAlignment="Right"
+                                               FontSize="11.5"
+                                               Foreground="#64748B"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding CurrentLogScopeSummary}"
+                                               Text="{Binding CurrentLogScopeSummary}" />
                                 </DockPanel>
 
                                 <TextBox x:Name="LogTextBox"

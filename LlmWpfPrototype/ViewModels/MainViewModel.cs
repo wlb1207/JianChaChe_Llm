@@ -136,6 +136,7 @@ public sealed partial class MainViewModel : ObservableObject
     private string _lastSubmittedInput = string.Empty;
     private string _selectedLogCategory = LogCategoryAll;
     private string _logSearchKeyword = string.Empty;
+    private string? _lastLogExportDirectory;
     private string _dimensionScanSummary = "当前还没有可用的尺寸扫描结果。";
     private string _mappingGuideText = "当前可编辑参数已根据固定配置完成映射，可直接修改尺寸。";
     private string _mappingValidationSummary = "尚未验证映射。";
@@ -215,7 +216,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         _primaryActionCommand = new AsyncRelayCommand(HandlePrimaryActionAsync, CanExecutePrimaryAction);
         _primaryActionCommand.CanExecuteChanged += (_, _) => NotifyUiBusyAndConfirmationChanged();
-        ChatMessages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(ShowWelcomeQuickPrompts));
+        ChatMessages.CollectionChanged += (_, _) => NotifyWelcomeVisibilityChanged();
         _clearConversationCommand = new AsyncRelayCommand(ClearConversationAsync, () => !_isLocalKnowledgeBusy && !_isGeneratingModel);
         _reparseCommand = new AsyncRelayCommand(ReparseAsync, CanReparse);
         _toggleAdvancedDebugCommand = new AsyncRelayCommand(ToggleAdvancedDebugAsync);
@@ -256,17 +257,28 @@ public sealed partial class MainViewModel : ObservableObject
         LoadMappingItems();
         RefreshScanState();
 
-        AppendLog($"已加载配置：Mode={_options.Mode}，Provider={_options.Provider}，Model={_options.Model}，ApiBaseUrl={_options.ApiBaseUrl}");
-        AppendLog($"参数字典路径：{_parameterDictionaryService.GetDictionaryPath()}");
-        AppendLog($"桁架弦杆截面参数配置路径：{_trussChordSectionConfigService.GetConfigPath()}");
-        AppendLog($"可编辑桁架弦杆配置路径：{_editableTrussMemberCatalogService.GetConfigPath()}");
-        AppendLog($"尺寸扫描结果路径：{_dimensionScanCatalogService.JsonPath}");
-        AppendLog("[VersionMarker] MainViewModel next-step guidance v5 loaded");
-        AppendLog("[VersionMarker] LinkedRedTubeCompensation runtime v1 loaded");
-        AppendLog("[VersionMarker] DeterministicLowerTrussGuard runtime v1 loaded");
-        AppendLog("[VersionMarker] UnifiedChatOrchestrator runtime v2 loaded");
+        AppendGlobalDiagnosticLogOnly($"已加载配置：Mode={_options.Mode}，Provider={_options.Provider}，Model={_options.Model}，ApiBaseUrl={_options.ApiBaseUrl}");
+        AppendGlobalDiagnosticLogOnly($"参数字典路径：{_parameterDictionaryService.GetDictionaryPath()}");
+        AppendGlobalDiagnosticLogOnly($"桁架弦杆截面参数配置路径：{_trussChordSectionConfigService.GetConfigPath()}");
+        AppendGlobalDiagnosticLogOnly($"可编辑桁架弦杆配置路径：{_editableTrussMemberCatalogService.GetConfigPath()}");
+        AppendGlobalDiagnosticLogOnly($"尺寸扫描结果路径：{_dimensionScanCatalogService.JsonPath}");
+        AppendGlobalDiagnosticLogOnly("[VersionMarker] MainViewModel next-step guidance v5 loaded");
+        AppendGlobalDiagnosticLogOnly("[VersionMarker] LinkedRedTubeCompensation runtime v1 loaded");
+        AppendGlobalDiagnosticLogOnly("[VersionMarker] DeterministicLowerTrussGuard runtime v1 loaded");
+        AppendGlobalDiagnosticLogOnly("[VersionMarker] UnifiedChatOrchestrator runtime v2 loaded");
         InitializeProjectManagement(projectStore);
     }
+
+    public Func<string, string, string?>? SelectLogExportPathHandler { get; set; }
+
+    public Func<string, Task<bool>>? ClipboardWriterOverride { get; set; }
+
+    public string CurrentLogScopeSummary =>
+        ActiveProject is { } active && _activeConversation is { } conv
+            ? $"当前对话：{active.Name} / {conv.Title}（{LogEntries.Count} 条）"
+            : LogEntries.Count > 0
+                ? $"当前会话日志（{LogEntries.Count} 条）"
+                : "当前无活动对话（系统级日志记录于 app.log）";
 
     public ObservableCollection<ChatMessage> ChatMessages { get; }
 
@@ -624,51 +636,58 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task HandlePrimaryActionAsync()
     {
-        if (IsSimulationEntryInput(UserInput))
+        try
         {
-            await SendUserMessageAsync();
-            return;
-        }
-
-        if (DesignStatus == StatusPendingConfirmation)
-        {
-            if (_pendingBusinessPlan is not null)
+            if (IsSimulationEntryInput(UserInput))
             {
-                if (!string.IsNullOrWhiteSpace(UserInput))
+                await SendUserMessageAsync();
+                return;
+            }
+
+            if (DesignStatus == StatusPendingConfirmation)
+            {
+                if (_pendingBusinessPlan is not null)
                 {
-                    await SendUserMessageAsync();
+                    if (!string.IsNullOrWhiteSpace(UserInput))
+                    {
+                        await SendUserMessageAsync();
+                        return;
+                    }
+
+                    await ExecuteConfirmedBusinessPlanAsync();
                     return;
                 }
 
-                await ExecuteConfirmedBusinessPlanAsync();
+                if (_lastExecutableActionSucceeded && _lastDispatchHandled && _lastDispatchSuppressDefaultReply)
+                {
+                    AppendLog("[Dispatch] HandlePrimaryActionAsync 检测到上一轮命令已真实执行成功，跳过旧 fallback。");
+                    DesignStatus = StatusCompleted;
+                    StatusMessage = "上一轮模型修改已完成。";
+                    RefreshSummaryProperties();
+                    RefreshActionState();
+                    return;
+                }
+
+                if (!HasExecutableMappings())
+                {
+                    DesignStatus = StatusCompleted;
+                    StatusMessage = "参数已确认，当前阶段仅保留识别结果，尚未配置真实模型映射。";
+                    AddAssistantMessage("参数已确认。当前阶段仅完成桁架参数识别，尚未配置真实 SolidWorks 映射，因此不会自动修改模型。");
+                    RefreshSummaryProperties();
+                    RefreshActionState();
+                    return;
+                }
+
+                await GenerateMainFlowAsync();
                 return;
             }
 
-            if (_lastExecutableActionSucceeded && _lastDispatchHandled && _lastDispatchSuppressDefaultReply)
-            {
-                AppendLog("[Dispatch] HandlePrimaryActionAsync 检测到上一轮命令已真实执行成功，跳过旧 fallback。");
-                DesignStatus = StatusCompleted;
-                StatusMessage = "上一轮模型修改已完成。";
-                RefreshSummaryProperties();
-                RefreshActionState();
-                return;
-            }
-
-            if (!HasExecutableMappings())
-            {
-                DesignStatus = StatusCompleted;
-                StatusMessage = "参数已确认，当前阶段仅保留识别结果，尚未配置真实模型映射。";
-                AddAssistantMessage("参数已确认。当前阶段仅完成桁架参数识别，尚未配置真实 SolidWorks 映射，因此不会自动修改模型。");
-                RefreshSummaryProperties();
-                RefreshActionState();
-                return;
-            }
-
-            await GenerateMainFlowAsync();
-            return;
+            await SendUserMessageAsync();
         }
-
-        await SendUserMessageAsync();
+        finally
+        {
+            SaveActiveConversationLogsSnapshot();
+        }
     }
 
     private async Task SendUserMessageAsync()
@@ -781,7 +800,8 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            if (!isNegativeOrCancel && IsPossibleResetWorkspaceRequest(input))
+            var hasExistingProjectModifications = (ActiveProject?.CurrentVersionNumber ?? 0) > 0 || _hasUnsavedModelChanges;
+            if (!isNegativeOrCancel && hasExistingProjectModifications && IsPossibleResetWorkspaceRequest(input))
             {
                 _pendingResetWorkspaceConfirmation = true;
                 AppendLog("[IntentGuard] PossibleResetWorkspaceRequest=True");
@@ -1201,6 +1221,16 @@ public sealed partial class MainViewModel : ObservableObject
             AppendLog("[IntentGuard] SuppressActionExecution=True");
             AppendLog("[IntentGuard] LocalReplyMode=LlmReplyOnly");
             AppendLog("[IntentGuard] LlmLocalReplyFallback=False");
+            AppendLog("[IntentGuard] LlmActionsEmpty=True DoNotInferModification=True");
+            var finalReplyOnlyText = !string.IsNullOrWhiteSpace(llmReply)
+                ? llmReply
+                : (!string.IsNullOrWhiteSpace(replyOnlyIntent.FallbackReply)
+                    ? replyOnlyIntent.FallbackReply
+                    : BuildQuestionOnlySafetyReply(userInput));
+            AppendLog($"[AI Reply] {finalReplyOnlyText}");
+            AddAssistantMessage(finalReplyOnlyText);
+            AppendConversationHistory(userInput, finalReplyOnlyText);
+            return;
         }
 
         if (ShouldBlockDispatchBecauseQuestion(userInput, parseResult))
@@ -1517,6 +1547,7 @@ public sealed partial class MainViewModel : ObservableObject
         _conversationTurn = 0;
         ClearPendingModificationContext("clear_conversation");
         ClearConversationHistory("clear_conversation");
+        LoadConversationLogEntries([]);
         AppendLog("已开启新的设计会话，工作区标记已重置为未初始化。");
         AddAssistantMessage("对话已清空。你可以继续让我打开当前模型、查询可编辑参数，或直接告诉我要修改的尺寸值。");
         PersistActiveConversationSnapshot();
@@ -1527,8 +1558,8 @@ public sealed partial class MainViewModel : ObservableObject
     private void AppendConversationHistory(string userInput, string assistantReply)
     {
         _memoryStore.RecordChatTurn(userInput, assistantReply);
-        PersistActiveConversationSnapshot(userInput);
         AppendLog("[ConversationHistory] Appended UserAndAssistant=True");
+        PersistActiveConversationSnapshot(userInput);
     }
 
     private void ClearConversationHistory(string reason)
@@ -2059,6 +2090,8 @@ public sealed partial class MainViewModel : ObservableObject
             SetLlmRuntimeStatus("异常", $"连接测试失败：{result.ExceptionMessage ?? "未知错误"}，点击立即重试");
             StatusMessage = $"LLM 连接测试失败：{result.ExceptionMessage ?? "未知错误"}";
         }
+
+        SaveActiveConversationLogsSnapshot();
     }
 
     private Task OpenDimensionScanCsvAsync()
@@ -2127,30 +2160,156 @@ public sealed partial class MainViewModel : ObservableObject
 
     private Task ClearLogsAsync()
     {
-        LogEntries.Clear();
-        _logBuilder.Clear();
-        Logs = string.Empty;
-        LogCategories.Clear();
-        LogCategories.Add(LogCategoryAll);
-        LogActions.Clear();
-        LogActions.Add(LogActionAll);
-        SelectedLogLevel = LogLevelAll;
-        SelectedLogCategory = LogCategoryAll;
-        SelectedLogAction = LogActionAll;
-        LogSearchKeyword = string.Empty;
-        RefreshActionState();
+        LoadConversationLogEntries([]);
+        SaveActiveConversationLogsSnapshot();
+        StatusMessage = "已清空当前对话的日志显示。";
         return Task.CompletedTask;
     }
 
-    private Task ExportLogsAsync()
+    private async Task ExportLogsAsync()
     {
-        var exportDirectory = AppPaths.LogsDirectory;
-        var exportPath = Path.Combine(exportDirectory, $"exported-logs-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
-        var content = BuildSanitizedLogTextForExportOrCopy();
+        var rawBody = BuildSanitizedLogTextForExportOrCopy();
+        if (string.IsNullOrWhiteSpace(rawBody))
+        {
+            StatusMessage = "当前对话暂无可导出的日志。";
+            return;
+        }
 
-        File.WriteAllText(exportPath, content, Encoding.UTF8);
-        StatusMessage = "日志已导出。";
-        return Task.CompletedTask;
+        if (!TryBuildSafeCopyLogText(rawBody, out var safeBody))
+        {
+            AppendLog("[Privacy] ExportLogSensitiveCheck=Failed ExportCancelled=True");
+            StatusMessage = "日志仍包含疑似敏感内容，已取消导出。";
+            return;
+        }
+
+        var defaultFileName = BuildDefaultLogExportFileName();
+        var initialDirectory = ResolveLogExportInitialDirectory();
+        var exportPath = SelectLogExportPathHandler is not null
+            ? SelectLogExportPathHandler(defaultFileName, initialDirectory)
+            : PromptLogExportSavePath(defaultFileName, initialDirectory);
+
+        if (string.IsNullOrWhiteSpace(exportPath))
+        {
+            StatusMessage = "已取消导出日志。";
+            return;
+        }
+
+        var exportContent = BuildExportedLogDocumentText(safeBody);
+
+        try
+        {
+            var directory = Path.GetDirectoryName(exportPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+                _lastLogExportDirectory = directory;
+            }
+
+            File.WriteAllText(exportPath, exportContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[LogExport] 导出日志文件失败：{ex.Message}", ex);
+            StatusMessage = $"导出日志失败：{ex.Message}";
+            return;
+        }
+
+        var copiedToClipboard = await TrySetClipboardTextAsync(exportContent);
+        var exportedFileName = Path.GetFileName(exportPath);
+        StatusMessage = copiedToClipboard
+            ? $"日志已导出至 {exportedFileName}，并已同步复制到剪贴板。"
+            : $"日志已导出至 {exportedFileName}（剪贴板暂被占用，未同步复制）。";
+    }
+
+    private string BuildDefaultLogExportFileName()
+    {
+        var projectSegment = SanitizeFileNameSegment(ActiveProject?.Name, "未命名项目");
+        var convSegment = SanitizeFileNameSegment(_activeConversation?.Title, "当前对话");
+        return $"{projectSegment}_{convSegment}_日志_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+    }
+
+    private static string SanitizeFileNameSegment(string? raw, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(raw.Length);
+        foreach (var ch in raw.Trim())
+        {
+            if (Array.IndexOf(invalidChars, ch) >= 0 || char.IsWhiteSpace(ch))
+            {
+                if (sb.Length > 0 && sb[^1] != '_')
+                {
+                    sb.Append('_');
+                }
+            }
+            else
+            {
+                sb.Append(ch);
+            }
+        }
+
+        var cleaned = sb.ToString().Trim('_', '.', '…');
+        if (string.IsNullOrWhiteSpace(cleaned))
+        {
+            return fallback;
+        }
+
+        return cleaned.Length <= 24 ? cleaned : cleaned[..24];
+    }
+
+    private string ResolveLogExportInitialDirectory()
+    {
+        if (!string.IsNullOrWhiteSpace(_lastLogExportDirectory) && Directory.Exists(_lastLogExportDirectory))
+        {
+            return _lastLogExportDirectory;
+        }
+
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        if (!string.IsNullOrWhiteSpace(desktop) && Directory.Exists(desktop))
+        {
+            return desktop;
+        }
+
+        Directory.CreateDirectory(AppPaths.LogsDirectory);
+        return AppPaths.LogsDirectory;
+    }
+
+    private static string? PromptLogExportSavePath(string defaultFileName, string initialDirectory)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "导出当前对话日志",
+            Filter = "文本文件 (*.txt)|*.txt|日志文件 (*.log)|*.log|所有文件 (*.*)|*.*",
+            DefaultExt = ".txt",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = defaultFileName,
+            InitialDirectory = initialDirectory
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    private string BuildExportedLogDocumentText(string safeLogBody)
+    {
+        var projectName = SanitizeLogText(ActiveProject?.Name ?? "未指定项目");
+        var versionBadge = SanitizeLogText(ActiveProject?.VersionBadgeText ?? "无版本快照");
+        var conversationTitle = SanitizeLogText(_activeConversation?.Title ?? "当前对话");
+        var header = new StringBuilder();
+        header.AppendLine("============================================================");
+        header.AppendLine("桥梁检查车智能设计助手 - 单对话运行日志");
+        header.AppendLine($"所属项目：{projectName}（{versionBadge}）");
+        header.AppendLine($"所属对话：{conversationTitle}");
+        header.AppendLine($"导出时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        header.AppendLine($"日志条数：{LogEntries.Count} 条");
+        header.AppendLine("============================================================");
+        header.AppendLine();
+        header.Append(safeLogBody);
+        return header.ToString();
     }
 
     private async Task CopyCurrentLogsAsync()
@@ -2759,7 +2918,8 @@ public sealed partial class MainViewModel : ObservableObject
             return reply;
         }
 
-        if (!string.IsNullOrWhiteSpace(reply) && !ContainsUnsafeSuccessClaim(reply))
+        var isModelCurrentlyOpen = !actionRequested && IsModelOpenForLocalReply();
+        if (!string.IsNullOrWhiteSpace(reply) && !ContainsUnsafeSuccessClaim(reply, isModelCurrentlyOpen))
         {
             return reply;
         }
@@ -2787,33 +2947,49 @@ public sealed partial class MainViewModel : ObservableObject
         return BuildQuestionOnlySafetyReply(userInput);
     }
 
-    private static bool ContainsUnsafeSuccessClaim(string reply)
+    private static bool ContainsUnsafeSuccessClaim(string reply, bool isModelCurrentlyOpen = false)
     {
         if (string.IsNullOrWhiteSpace(reply))
         {
             return false;
         }
 
-        return reply.Contains("已打开", StringComparison.Ordinal) ||
-               reply.Contains("已经打开", StringComparison.Ordinal) ||
-               reply.Contains("已为你打开", StringComparison.Ordinal) ||
-               reply.Contains("模型已打开", StringComparison.Ordinal) ||
-               reply.Contains("已执行", StringComparison.Ordinal) ||
-               reply.Contains("已经执行", StringComparison.Ordinal) ||
-               reply.Contains("执行完成", StringComparison.Ordinal) ||
-               reply.Contains("已完成", StringComparison.Ordinal) ||
-               reply.Contains("已经完成", StringComparison.Ordinal) ||
-               reply.Contains("已处理", StringComparison.Ordinal) ||
-               reply.Contains("处理完成", StringComparison.Ordinal) ||
-               reply.Contains("已更新", StringComparison.Ordinal) ||
-               reply.Contains("更新完成", StringComparison.Ordinal) ||
-               reply.Contains("已完成修改", StringComparison.Ordinal) ||
-               reply.Contains("已经修改", StringComparison.Ordinal) ||
-               reply.Contains("修改完成", StringComparison.Ordinal) ||
-               reply.Contains("已保存", StringComparison.Ordinal) ||
-               reply.Contains("已经保存", StringComparison.Ordinal) ||
-               reply.Contains("已帮你", StringComparison.Ordinal) ||
-               reply.Contains("操作完成", StringComparison.Ordinal);
+        if (reply.Contains("已为你打开", StringComparison.Ordinal) ||
+            reply.Contains("已帮你", StringComparison.Ordinal) ||
+            reply.Contains("已执行", StringComparison.Ordinal) ||
+            reply.Contains("已经执行", StringComparison.Ordinal) ||
+            reply.Contains("执行完成", StringComparison.Ordinal) ||
+            reply.Contains("已处理", StringComparison.Ordinal) ||
+            reply.Contains("处理完成", StringComparison.Ordinal) ||
+            reply.Contains("已更新", StringComparison.Ordinal) ||
+            reply.Contains("更新完成", StringComparison.Ordinal) ||
+            reply.Contains("已完成修改", StringComparison.Ordinal) ||
+            reply.Contains("已经修改", StringComparison.Ordinal) ||
+            reply.Contains("修改完成", StringComparison.Ordinal) ||
+            reply.Contains("已保存", StringComparison.Ordinal) ||
+            reply.Contains("已经保存", StringComparison.Ordinal) ||
+            reply.Contains("操作完成", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!isModelCurrentlyOpen &&
+            (reply.Contains("已打开", StringComparison.Ordinal) ||
+             reply.Contains("已经打开", StringComparison.Ordinal) ||
+             reply.Contains("模型已打开", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (Regex.IsMatch(
+                reply,
+                @"(?:已|已经)完成(?:本次|该|此次|模型|尺寸|截面|壁厚|参数|改模|修改|更新|打开|保存|操作|执行)",
+                RegexOptions.CultureInvariant))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static string BuildQuestionOnlySafetyReply(string input)
@@ -4578,6 +4754,13 @@ public sealed partial class MainViewModel : ObservableObject
     private static bool IsCapabilityQuestionIntent(string input)
     {
         var normalized = NormalizeIntentText(input);
+        if (normalized.Contains("接下来", StringComparison.Ordinal) ||
+            normalized.Contains("下一步", StringComparison.Ordinal) ||
+            normalized.Contains("第一步", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         return normalized.Contains("你只有这些功能吗", StringComparison.Ordinal) ||
                normalized.Contains("你还能做什么", StringComparison.Ordinal) ||
                normalized.Contains("你可以做什么", StringComparison.Ordinal) ||
@@ -4588,7 +4771,21 @@ public sealed partial class MainViewModel : ObservableObject
                normalized.Contains("这个软件能干什么", StringComparison.Ordinal) ||
                normalized.Contains("这个软件可以干什么", StringComparison.Ordinal) ||
                normalized.Contains("软件能干什么", StringComparison.Ordinal) ||
-               normalized.Contains("你能做什么", StringComparison.Ordinal);
+               normalized.Contains("你能做什么", StringComparison.Ordinal) ||
+               normalized.Contains("解释当前能力", StringComparison.Ordinal) ||
+               normalized.Contains("说明当前能力", StringComparison.Ordinal) ||
+               normalized.Contains("介绍当前能力", StringComparison.Ordinal) ||
+               normalized.Contains("介绍一下当前能力", StringComparison.Ordinal) ||
+               normalized.Contains("当前能力", StringComparison.Ordinal) ||
+               normalized.Contains("你的能力", StringComparison.Ordinal) ||
+               normalized.Contains("有哪些功能", StringComparison.Ordinal) ||
+               normalized.Contains("有什么功能", StringComparison.Ordinal) ||
+               normalized.Contains("可以做什么", StringComparison.Ordinal) ||
+               normalized.Contains("能做什么", StringComparison.Ordinal) ||
+               normalized.Contains("能干什么", StringComparison.Ordinal) ||
+               normalized.Contains("可以干什么", StringComparison.Ordinal) ||
+               normalized.Contains("介绍一下你自己", StringComparison.Ordinal) ||
+               normalized.Equals("你是谁", StringComparison.Ordinal);
     }
 
     private static bool IsNextStepQueryIntentForClassification(string input)
@@ -4967,7 +5164,8 @@ public sealed partial class MainViewModel : ObservableObject
         return text.Contains('？', StringComparison.Ordinal) ||
                text.Contains('?', StringComparison.Ordinal) ||
                normalized.Contains("吗", StringComparison.Ordinal) ||
-               normalized.Contains("么", StringComparison.Ordinal) ||
+               normalized.EndsWith("么", StringComparison.Ordinal) ||
+               (normalized.Contains("什么", StringComparison.Ordinal) && !IsExplicitOpenModelCommand(text, normalized)) ||
                normalized.Contains("是不是", StringComparison.Ordinal) ||
                normalized.Contains("是否", StringComparison.Ordinal) ||
                normalized.Contains("要不要", StringComparison.Ordinal) ||
@@ -4980,6 +5178,55 @@ public sealed partial class MainViewModel : ObservableObject
     public void AppendSystemLog(string message)
     {
         AppendLog(message, source: "System");
+    }
+
+    private void AppendGlobalDiagnosticLogOnly(string message, Exception? exception = null, string source = "MainViewModel")
+    {
+        var cleanedMessage = SanitizeLogText(StripLogCategoryPrefix(message));
+        var entry = new LogEntryItem
+        {
+            Timestamp = DateTime.Now,
+            Level = ResolveLogLevel(cleanedMessage, exception),
+            Category = ResolveLogCategory(message),
+            Action = ResolveLogAction(cleanedMessage),
+            Message = cleanedMessage,
+            Exception = exception?.ToString() ?? string.Empty,
+            Source = source
+        };
+
+        AppendLogToFile(entry);
+    }
+
+    private void LoadConversationLogEntries(IEnumerable<LogEntryItem> entries)
+    {
+        if (!CheckAccessToUiThread())
+        {
+            ExecuteOnUiThread(() => LoadConversationLogEntries(entries));
+            return;
+        }
+
+        LogEntries.Clear();
+        _logBuilder.Clear();
+        LogCategories.Clear();
+        LogCategories.Add(LogCategoryAll);
+        LogActions.Clear();
+        LogActions.Add(LogActionAll);
+        SelectedLogLevel = LogLevelAll;
+        SelectedLogCategory = LogCategoryAll;
+        SelectedLogAction = LogActionAll;
+        LogSearchKeyword = string.Empty;
+
+        foreach (var entry in entries)
+        {
+            LogEntries.Add(entry);
+            _logBuilder.AppendLine(entry.DisplayText);
+            EnsureLogCategoryExists(entry.Category);
+            EnsureLogActionExists(entry.Action);
+        }
+
+        UpdateFilteredLogs();
+        RefreshActionState();
+        OnPropertyChanged(nameof(CurrentLogScopeSummary));
     }
 
     private void AppendLog(string message, Exception? exception = null, string source = "MainViewModel")
@@ -5009,6 +5256,7 @@ public sealed partial class MainViewModel : ObservableObject
         AppendLogToFile(entry);
         UpdateFilteredLogs();
         RefreshActionState();
+        OnPropertyChanged(nameof(CurrentLogScopeSummary));
     }
 
     private string SanitizeLogText(string? text)
@@ -5101,12 +5349,28 @@ public sealed partial class MainViewModel : ObservableObject
     {
         text ??= string.Empty;
 
+        if (ClipboardWriterOverride is not null)
+        {
+            try
+            {
+                return await ClipboardWriterOverride(text);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         for (var i = 0; i < maxRetries; i++)
         {
             try
             {
                 System.Windows.Clipboard.SetText(text, System.Windows.TextDataFormat.UnicodeText);
                 return true;
+            }
+            catch (ThreadStateException)
+            {
+                return false;
             }
             catch (COMException ex) when ((uint)ex.HResult == 0x800401D0)
             {

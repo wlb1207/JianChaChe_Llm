@@ -17,9 +17,11 @@ public sealed class AutomaticKnowledgeChatService
 {
     private static readonly string[] EngineeringTerms =
         ["工程", "设计", "规范", "标准", "校核", "计算", "许用", "应力", "安全系数", "强度", "刚度", "挠度", "疲劳",
-         "主梁", "桁架", "弦杆", "截面", "载荷", "荷载", "材料", "边界", "参数", "尺寸", "壁厚", "反力架", "桥梁", "屈服", "稳定性"];
+         "主梁", "桁架", "弦杆", "截面", "载荷", "荷载", "材料", "边界", "参数", "尺寸", "壁厚", "反力架", "桥梁", "屈服", "稳定性",
+         "宽厚比", "长细比", "焊缝", "焊脚", "螺栓", "法兰", "节点", "护栏", "踢脚板", "抗风", "防腐蚀", "残余变形", "检查车",
+         "轮压", "车轮", "打滑", "黏着", "试验", "静载", "动载", "最小壁厚", "最小厚度", "脆性", "防脆断", "质量组别", "冲击功", "预拱", "预翘", "限界", "净距"];
     private static readonly string[] FollowupTerms = ["这个", "那个", "该", "它", "这些", "那么", "为什么", "依据呢", "参数呢", "继续", "呢", "how about", "what about"];
-    private static readonly string[] FocusTerms = ["许用应力", "安全系数", "强度", "刚度", "挠度", "疲劳", "稳定性", "载荷", "荷载", "材料", "壁厚", "截面"];
+    private static readonly string[] FocusTerms = ["许用应力", "安全系数", "强度", "刚度", "挠度", "疲劳", "稳定性", "载荷", "荷载", "材料", "壁厚", "截面", "宽厚比", "长细比", "焊缝", "节点", "抗风", "护栏", "轮压", "试验", "防脆断", "净距", "预拱"];
     private readonly Func<string, LocalKnowledgeSearchResponse> _search;
     private readonly ILlmService _model;
     private static readonly JsonSerializerOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -53,7 +55,7 @@ public sealed class AutomaticKnowledgeChatService
     }
 
     private static bool IsEngineering(string question) => EngineeringTerms.Any(x => question.Contains(x, StringComparison.OrdinalIgnoreCase))
-        || Regex.IsMatch(question, @"GB\s*[/／]?\s*T?\s*\d|\d\s*(MPa|kN|mm)", RegexOptions.IgnoreCase);
+        || Regex.IsMatch(question, @"(?:GB|JT|JTG|JB|NB|YB)\s*[/／]?\s*T?\s*[A-Z]?\d|\d\s*(MPa|kN|mm)", RegexOptions.IgnoreCase);
 
     public async Task<AutomaticChatPreparation> PrepareAsync(string question,
         IReadOnlyList<ConversationMessage> history, CancellationToken cancellationToken = default, string? previousTopic = null)

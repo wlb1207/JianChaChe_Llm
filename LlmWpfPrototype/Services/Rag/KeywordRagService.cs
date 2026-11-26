@@ -5,7 +5,7 @@ namespace LlmWpfPrototype.Services.Rag;
 
 public sealed class KeywordRagService
 {
-    private const string VerifiedMarkdownIndexVersion = "verified-markdown-v2";
+    private const string VerifiedMarkdownIndexVersion = "multi-standard-kb-v3";
     private static readonly Regex HeadingRegex = new(@"^\s*第.+[章节]\s+.+$", RegexOptions.Compiled);
     private static readonly Regex TokenRegex = new(@"[\u4e00-\u9fa5]{2,}|[A-Za-z0-9/\-\.]{2,}", RegexOptions.Compiled);
     private readonly KnowledgeBaseLoader _knowledgeBaseLoader;
@@ -26,6 +26,41 @@ public sealed class KeywordRagService
         LastBuiltFromVerifiedMarkdown = false;
         LastVerifiedMarkdownChunkCount = 0;
         LastFallbackToKnowledgeBaseText = false;
+
+        if (_knowledgeBaseLoader.TryLoadAllKnowledgeDocuments(out var multiDocuments, out _, out var fingerprint, out _))
+        {
+            var loadedDocuments = multiDocuments
+                .Where(item => item.MarkdownLoaded && !string.IsNullOrWhiteSpace(item.Markdown))
+                .ToList();
+
+            if (loadedDocuments.Count > 0)
+            {
+                var kbRootPath = _knowledgeBaseLoader.ResolveKnowledgeBaseRootPath();
+                var sourceDocumentPath = $"{kbRootPath}|{VerifiedMarkdownIndexVersion}|{fingerprint}";
+                var existingMultiIndex = _knowledgeBaseLoader.LoadIndexOrEmpty();
+                if (existingMultiIndex.Chunks.Count > 0 &&
+                    string.Equals(existingMultiIndex.SourceDocumentPath, sourceDocumentPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    LastBuiltFromVerifiedMarkdown = existingMultiIndex.Chunks.Any(chunk => !string.IsNullOrWhiteSpace(chunk.RuleId));
+                    LastVerifiedMarkdownChunkCount = existingMultiIndex.Chunks.Count(chunk => !string.IsNullOrWhiteSpace(chunk.RuleId));
+                    LastFallbackToKnowledgeBaseText = false;
+                    return existingMultiIndex.Chunks;
+                }
+
+                var multiChunks = BuildMultiStandardRuleChunks(loadedDocuments);
+                _knowledgeBaseLoader.SaveIndex(new KnowledgeBaseLoader.RagIndexDocument
+                {
+                    SourceDocumentPath = sourceDocumentPath,
+                    GeneratedAtUtc = DateTime.UtcNow,
+                    Chunks = multiChunks.ToList()
+                });
+
+                LastBuiltFromVerifiedMarkdown = true;
+                LastVerifiedMarkdownChunkCount = multiChunks.Count;
+                LastFallbackToKnowledgeBaseText = false;
+                return multiChunks;
+            }
+        }
 
         if (_knowledgeBaseLoader.TryLoadVerifiedRuleDocuments(out var verifiedDocuments, out _))
         {
@@ -159,6 +194,52 @@ public sealed class KeywordRagService
         return chunks;
     }
 
+    private static IReadOnlyList<RagDocumentChunk> BuildMultiStandardRuleChunks(
+        IReadOnlyList<KnowledgeBaseLoader.MultiStandardRuleDocument> documents)
+    {
+        var chunks = new List<RagDocumentChunk>();
+        var order = 0;
+
+        foreach (var document in documents)
+        {
+            var rule = document.Rule;
+            var markdown = document.Markdown.Trim();
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                continue;
+            }
+
+            var keywords = BuildRuleSearchTerms(rule, markdown)
+                .Concat([document.Standard, document.StandardName, document.PackId])
+                .Where(term => !string.IsNullOrWhiteSpace(term))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            chunks.Add(new RagDocumentChunk
+            {
+                Id = document.ChunkId,
+                PackId = document.PackId,
+                Standard = document.Standard,
+                RuleId = rule.Id,
+                SourceDocument = document.SourceDocument,
+                Title = !string.IsNullOrWhiteSpace(rule.Topic) ? rule.Topic : rule.Title,
+                Topic = rule.Topic,
+                Clause = rule.Clause,
+                Summary = rule.Summary,
+                Section = rule.Clause,
+                Text = markdown,
+                Order = order++,
+                Keywords = keywords,
+                MustRequire = rule.MustRequire.ToList(),
+                DoNotAnswerWithout = rule.DoNotAnswerWithout.ToList(),
+                KeyLimits = rule.KeyLimits.ToList(),
+                KeyFormulas = rule.KeyFormulas.ToList()
+            });
+        }
+
+        return chunks;
+    }
+
     private static IReadOnlyList<RagDocumentChunk> BuildVerifiedRuleChunks(
         IReadOnlyList<KnowledgeBaseLoader.VerifiedRuleDocument> verifiedDocuments)
     {
@@ -271,6 +352,14 @@ public sealed class KeywordRagService
             {
                 matchedKeywords.Add(token);
                 score += 3;
+            }
+
+            if (!string.IsNullOrWhiteSpace(chunk.Standard) &&
+                token.Length >= 3 &&
+                chunk.Standard.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
+                matchedKeywords.Add(token);
+                score += 6;
             }
 
             if (!string.IsNullOrWhiteSpace(chunk.Title) &&

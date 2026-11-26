@@ -4,6 +4,10 @@ public sealed class RagDocumentChunk
 {
     public string Id { get; set; } = string.Empty;
 
+    public string PackId { get; set; } = string.Empty;
+
+    public string Standard { get; set; } = string.Empty;
+
     public string SourceDocument { get; set; } = string.Empty;
 
     public string RuleId { get; set; } = string.Empty;

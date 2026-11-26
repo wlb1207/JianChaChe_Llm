@@ -28,9 +28,9 @@ public sealed class KnowledgeHistoryProvenance
 
 public static class KnowledgeDisclosureGuard
 {
-    private const string PolicyHash = "E21A4EB90543D13D10B71F975F59750C04E5454DF1C1C7F46F558CA6B501BFC8";
+    private const string PolicyHash = "8BB909E35725219189776FC6D73233FAE85F267A37BE58E925492A55D2D77E4D";
     private static string PolicyPath => Path.Combine(AppContext.BaseDirectory, "DisclosurePolicy", "approved-sources.json");
-    private static string KnowledgeRoot => Path.Combine(AppContext.BaseDirectory, "KnowledgeBase", "GB_T_3811_2008");
+    private static string KnowledgeRoot => Path.Combine(AppContext.BaseDirectory, "KnowledgeBase");
     private sealed record EvidenceProof(string File, string FullText, string SentText, LocalChatSourceRange[] Ranges, string Clause, string ChunkId);
     private sealed record Proof(EvidenceProof[] Evidence, DisclosureVersion[] Inherited, bool UnknownHistory)
     { public DisclosureVersion[]? ValidatedVersions { get; set; } }
@@ -39,7 +39,16 @@ public static class KnowledgeDisclosureGuard
     private static readonly ConditionalWeakTable<string, Proof> Prepared = new();
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     private static bool SafeName(string name) => System.Text.RegularExpressions.Regex.IsMatch(
-        name, @"^verified/[a-zA-Z0-9_]+\.md$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        name, @"^(?:verified/[a-zA-Z0-9_]+\.md|[a-zA-Z0-9_-]+/(?:verified/)?[a-zA-Z0-9_]+\.md)$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static string ResolveApprovedDocumentPath(string name)
+    {
+        var normalized = name.Replace('/', Path.DirectorySeparatorChar);
+        return name.StartsWith("verified/", StringComparison.Ordinal)
+            ? Path.Combine(KnowledgeRoot, "GB_T_3811_2008", normalized)
+            : Path.Combine(KnowledgeRoot, normalized);
+    }
 
     internal static void Register(string prompt, IReadOnlyList<LocalChatEvidence> evidence,
         IReadOnlyList<ConversationMessage> context)
@@ -74,7 +83,8 @@ public static class KnowledgeDisclosureGuard
             if (Hash(bytes) != PolicyHash) throw new KnowledgeDisclosureException("批准策略缺失、损坏或版本不符，需确认策略后再发送本地资料");
             using var policy = JsonDocument.Parse(bytes);
             var root = policy.RootElement;
-            if (root.GetProperty("schemaVersion").GetInt32() != 1)
+            var schemaVersion = root.GetProperty("schemaVersion").GetInt32();
+            if (schemaVersion is not (1 or 2))
                 throw new KnowledgeDisclosureException("批准策略格式无法确认");
             if (destination is not null && !string.Equals(destination,
                 root.GetProperty("endpoint").GetString(), StringComparison.Ordinal))
@@ -87,7 +97,7 @@ public static class KnowledgeDisclosureGuard
             var versions = new List<DisclosureVersion>();
             foreach (var name in names)
             {
-                var fileBytes = File.ReadAllBytes(Path.Combine(KnowledgeRoot, name.Replace('/', Path.DirectorySeparatorChar)));
+                var fileBytes = File.ReadAllBytes(ResolveApprovedDocumentPath(name));
                 var hash = Hash(fileBytes);
                 if (!string.Equals(hash, approved[name], StringComparison.Ordinal)
                     || proof.Inherited.Any(v => v.File == name && v.Sha256 != hash))
@@ -132,7 +142,7 @@ public static class KnowledgeDisclosureGuard
     internal static void RejectKnowledgeOnLegacyPath(IReadOnlyList<ConversationMessage>? history, string? input = null)
     {
         static bool Marked(string text) => System.Text.RegularExpressions.Regex.IsMatch(
-            text, @"\[E\d+\]|verified/[a-zA-Z0-9_]+\.md");
+            text, @"\[E\d+\]|(?:[a-zA-Z0-9_-]+/)?verified/[a-zA-Z0-9_]+\.md");
         var inputHasKnowledge = input is not null && (Marked(input)
             || (Prepared.TryGetValue(input, out var proof)
                 && (proof.Evidence.Length > 0 || proof.Inherited.Length > 0 || proof.UnknownHistory)));

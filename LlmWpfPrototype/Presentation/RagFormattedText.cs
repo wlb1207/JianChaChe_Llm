@@ -33,6 +33,11 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         @"^[ \t]*(?<formula>\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$)[ \t]*$", RegexOptions.Multiline);
     private static readonly Regex Heading = new(@"^[ \t]{0,3}#{1,6}[ \t]+(?<body>\S.*)$");
     private static readonly Regex ListItem = new(@"^[ \t]*(?<mark>[-*+•]|\d{1,6}[.)])[ \t]+(?<body>\S.*)$");
+    private static readonly Regex BlockQuoteLine = new(@"^[ \t]*>[ \t]?(?<body>.*)$");
+    private static readonly Regex HorizontalRule = new(@"^[ \t]*(?:[-*_][ \t]*){3,}$");
+    private static readonly Regex TableSeparatorLine = new(
+        @"^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(?:\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*$",
+        RegexOptions.CultureInvariant);
     private static readonly Regex SourceMetadata = new(
         @"(?im)^[ \t]*(?:Source|Topic|SourceType|Verified|Clause|Page|资料标注条款|条款号|页码|文件|原文位置)\s*[:：][^\n]*(?:\n|$)");
     private static readonly Regex NumberedHeading = new(
@@ -44,14 +49,23 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
     private static readonly Regex PageReference = new(
         @"第\s*\d+(?:\s*[-–—至]\s*\d+)?\s*页");
     private static readonly Regex InlineToken = new(
-        @"(?<formula>\\\([^\r\n]*?\\\)|\\\[[^\r\n]*?\\\]|\$\$[^\r\n]+?\$\$|(?<![\\$\w])\$(?![$\s])[^\r\n$]+\$(?![$\w]))"
+        @"(?<formula>\\\([^\r\n]*?\\\)|\\\[[^\r\n]*?\\\]|\$\$[^\r\n]+?\$\$|(?<![\\$A-Za-z0-9])\$(?![$\s])[^\r\n$]*?(?<![\s\\])\$(?![$A-Za-z0-9]))"
         + @"|(?<code>`[^`\r\n]+`)|(?<strong>\*\*(?<stars>\S(?:.*?\S)?)\*\*|__(?<underscores>\S(?:.*?\S)?)__)"
         + @"|(?<citation>(?<!\\)\[(?<id>E[0-9]+)\])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     private static readonly FontFamily MathFont = new("Cambria Math");
     private static readonly Brush CitationBrush = BrushFromRgb(15, 90, 153);
     private static readonly Brush FormulaBackground = BrushFromRgb(238, 244, 250);
     private static readonly Brush InlineCodeBackground = BrushFromRgb(241, 245, 249);
     private static readonly Brush InlineCodeForeground = BrushFromRgb(15, 90, 153);
+    private static readonly Brush TableBorderBrush = BrushFromRgb(203, 213, 225);
+    private static readonly Brush TableGridBrush = BrushFromRgb(226, 232, 240);
+    private static readonly Brush TableHeaderBackground = BrushFromRgb(241, 245, 249);
+    private static readonly Brush TableStripeBackground = BrushFromRgb(248, 250, 252);
+    private static readonly Brush QuoteBorderBrush = BrushFromRgb(56, 189, 248);
+    private static readonly Brush QuoteBackground = BrushFromRgb(240, 249, 255);
+    private static readonly Brush QuoteForeground = BrushFromRgb(12, 74, 110);
+    private static readonly Brush RuleBrush = BrushFromRgb(226, 232, 240);
 
     public string Markup
     {
@@ -115,7 +129,7 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
             ? "依据 " + id[1..]
             : "依据 " + id;
 
-    private static FlowDocument BuildDocument(string text, IReadOnlyList<LocalChatEvidence>? citations, bool hideSourceReferences)
+    public static FlowDocument BuildDocument(string text, IReadOnlyList<LocalChatEvidence>? citations, bool hideSourceReferences)
     {
         var document = new FlowDocument { PagePadding = new Thickness(0), LineHeight = 22 };
         var sources = (citations ?? []).ToDictionary(source => source.Id, StringComparer.OrdinalIgnoreCase);
@@ -127,13 +141,14 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         {
             AddTextBlocks(document, normalized[start..match.Index], sources);
             var token = match.Groups["formula"].Value;
-            var formula = FormulaRun(token);
-            document.Blocks.Add(new Paragraph(formula)
+            var formulaParagraph = new Paragraph
             {
                 Margin = new Thickness(0, 4, 0, 8),
-                Padding = new Thickness(12, 5, 12, 5),
+                Padding = new Thickness(12, 6, 12, 6),
                 Background = FormulaBackground
-            });
+            };
+            AddFormulaInlines(formulaParagraph.Inlines, token);
+            document.Blocks.Add(formulaParagraph);
             start = match.Index + match.Length;
         }
         AddTextBlocks(document, normalized[start..], sources);
@@ -156,10 +171,13 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
     private static void AddTextBlocks(FlowDocument document, string text,
         IReadOnlyDictionary<string, LocalChatEvidence> sources)
     {
+        var lines = text.Split('\n');
         var afterBlank = false;
         var inCodeBlock = false;
-        foreach (var line in text.Split('\n'))
+
+        for (var i = 0; i < lines.Length; i++)
         {
+            var line = lines[i];
             if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
             {
                 inCodeBlock = !inCodeBlock;
@@ -172,15 +190,84 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
                 continue;
             }
 
+            if (inCodeBlock)
+            {
+                var codeParagraph = new Paragraph
+                {
+                    Margin = new Thickness(0, afterBlank && document.Blocks.Count > 0 ? 5 : 0, 0, 2)
+                };
+                afterBlank = false;
+                codeParagraph.Inlines.Add(new Run(line) { FontFamily = new FontFamily("Consolas") });
+                document.Blocks.Add(codeParagraph);
+                continue;
+            }
+
+            // Detect and render Markdown tables natively as WPF FlowDocument Table.
+            if (i + 1 < lines.Length && IsTableHeaderPair(line, lines[i + 1]))
+            {
+                var headerCells = SplitTableRow(line);
+                var alignments = ParseTableAlignments(lines[i + 1], headerCells.Length);
+                var dataRows = new List<string[]>();
+                var rowIndex = i + 2;
+                while (rowIndex < lines.Length && IsTableDataRow(lines[rowIndex]))
+                {
+                    dataRows.Add(SplitTableRow(lines[rowIndex]));
+                    rowIndex++;
+                }
+
+                document.Blocks.Add(BuildTable(headerCells, alignments, dataRows, sources));
+                afterBlank = false;
+                i = rowIndex - 1;
+                continue;
+            }
+
+            // Detect horizontal rule (--- / ***)
+            if (HorizontalRule.IsMatch(line))
+            {
+                document.Blocks.Add(new Paragraph
+                {
+                    Margin = new Thickness(0, 6, 0, 6),
+                    BorderBrush = RuleBrush,
+                    BorderThickness = new Thickness(0, 1, 0, 0),
+                    FontSize = 1,
+                    LineHeight = 1
+                });
+                afterBlank = false;
+                continue;
+            }
+
+            // Detect blockquote callout (> ...)
+            var quote = BlockQuoteLine.Match(line);
+            if (quote.Success)
+            {
+                var quoteParagraph = new Paragraph
+                {
+                    Margin = new Thickness(0, afterBlank && document.Blocks.Count > 0 ? 6 : 3, 0, 6),
+                    Padding = new Thickness(10, 5, 10, 5),
+                    Background = QuoteBackground,
+                    BorderBrush = QuoteBorderBrush,
+                    BorderThickness = new Thickness(3, 0, 0, 0),
+                    Foreground = QuoteForeground
+                };
+                afterBlank = false;
+                AddInlines(quoteParagraph.Inlines, quote.Groups["body"].Value.Trim(), sources);
+                while (i + 1 < lines.Length)
+                {
+                    var nextQuote = BlockQuoteLine.Match(lines[i + 1]);
+                    if (!nextQuote.Success) break;
+                    i++;
+                    quoteParagraph.Inlines.Add(new LineBreak());
+                    AddInlines(quoteParagraph.Inlines, nextQuote.Groups["body"].Value.Trim(), sources);
+                }
+                document.Blocks.Add(quoteParagraph);
+                continue;
+            }
+
             var paragraph = new Paragraph { Margin = new Thickness(0, afterBlank && document.Blocks.Count > 0 ? 7 : 0, 0, 3) };
             afterBlank = false;
             var heading = Heading.Match(line);
             var list = ListItem.Match(line);
-            if (inCodeBlock)
-            {
-                paragraph.Inlines.Add(new Run(line) { FontFamily = new FontFamily("Consolas") });
-            }
-            else if (heading.Success)
+            if (heading.Success)
             {
                 paragraph.FontWeight = FontWeights.SemiBold;
                 paragraph.FontSize = 15;
@@ -203,6 +290,129 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         }
     }
 
+    private static bool IsTableHeaderPair(string headerLine, string separatorLine)
+    {
+        if (!headerLine.Contains('|') || !TableSeparatorLine.IsMatch(separatorLine))
+            return false;
+        var headerCells = SplitTableRow(headerLine);
+        var sepCells = SplitTableRow(separatorLine);
+        return headerCells.Length >= 2 && sepCells.Length >= 2;
+    }
+
+    private static bool IsTableDataRow(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || !line.Contains('|'))
+            return false;
+        var trimmed = line.TrimStart();
+        if (trimmed.StartsWith('#') || trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith('>'))
+            return false;
+        return SplitTableRow(line).Length >= 2;
+    }
+
+    private static string[] SplitTableRow(string line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.StartsWith('|')) trimmed = trimmed[1..];
+        if (trimmed.EndsWith('|') && !trimmed.EndsWith(@"\|", StringComparison.Ordinal))
+            trimmed = trimmed[..^1];
+        return trimmed.Split('|').Select(cell => cell.Replace(@"\|", "|").Trim()).ToArray();
+    }
+
+    private static TextAlignment[] ParseTableAlignments(string separatorLine, int columnCount)
+    {
+        var cells = SplitTableRow(separatorLine);
+        var alignments = new TextAlignment[columnCount];
+        for (var c = 0; c < columnCount; c++)
+        {
+            var token = c < cells.Length ? cells[c].Trim() : string.Empty;
+            var left = token.StartsWith(':');
+            var right = token.EndsWith(':');
+            alignments[c] = (left, right) switch
+            {
+                (true, true) => TextAlignment.Center,
+                (false, true) => TextAlignment.Right,
+                _ => TextAlignment.Left
+            };
+        }
+        return alignments;
+    }
+
+    private static Table BuildTable(
+        string[] headerCells,
+        TextAlignment[] alignments,
+        IReadOnlyList<string[]> dataRows,
+        IReadOnlyDictionary<string, LocalChatEvidence> sources)
+    {
+        var columnCount = Math.Max(headerCells.Length, dataRows.Count > 0 ? dataRows.Max(r => r.Length) : 0);
+        var table = new Table
+        {
+            CellSpacing = 0,
+            Margin = new Thickness(0, 6, 0, 10),
+            BorderBrush = TableBorderBrush,
+            BorderThickness = new Thickness(1),
+            FontSize = 13
+        };
+        for (var c = 0; c < columnCount; c++)
+            table.Columns.Add(new TableColumn());
+
+        var headerGroup = new TableRowGroup();
+        var headerRow = new TableRow { Background = TableHeaderBackground };
+        for (var c = 0; c < columnCount; c++)
+        {
+            var text = c < headerCells.Length ? headerCells[c] : string.Empty;
+            var p = new Paragraph
+            {
+                Margin = new Thickness(0),
+                LineHeight = 20,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = c < alignments.Length ? alignments[c] : TextAlignment.Left
+            };
+            AddInlines(p.Inlines, text, sources);
+            headerRow.Cells.Add(new TableCell(p)
+            {
+                Padding = new Thickness(8, 5, 8, 5),
+                BorderBrush = TableBorderBrush,
+                BorderThickness = new Thickness(0, 0, c + 1 < columnCount ? 1 : 0, 1)
+            });
+        }
+        headerGroup.Rows.Add(headerRow);
+        table.RowGroups.Add(headerGroup);
+
+        if (dataRows.Count > 0)
+        {
+            var bodyGroup = new TableRowGroup();
+            for (var r = 0; r < dataRows.Count; r++)
+            {
+                var rowCells = dataRows[r];
+                var row = new TableRow
+                {
+                    Background = r % 2 == 1 ? TableStripeBackground : Brushes.White
+                };
+                for (var c = 0; c < columnCount; c++)
+                {
+                    var text = c < rowCells.Length ? rowCells[c] : string.Empty;
+                    var p = new Paragraph
+                    {
+                        Margin = new Thickness(0),
+                        LineHeight = 20,
+                        TextAlignment = c < alignments.Length ? alignments[c] : TextAlignment.Left
+                    };
+                    AddInlines(p.Inlines, text, sources);
+                    row.Cells.Add(new TableCell(p)
+                    {
+                        Padding = new Thickness(8, 4.5, 8, 4.5),
+                        BorderBrush = TableGridBrush,
+                        BorderThickness = new Thickness(0, 0, c + 1 < columnCount ? 1 : 0, r + 1 < dataRows.Count ? 1 : 0)
+                    });
+                }
+                bodyGroup.Rows.Add(row);
+            }
+            table.RowGroups.Add(bodyGroup);
+        }
+
+        return table;
+    }
+
     private static void AddInlines(InlineCollection target, string text,
         IReadOnlyDictionary<string, LocalChatEvidence> sources, bool allowBold = true)
     {
@@ -212,7 +422,7 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
             if (position < match.Index) target.Add(new Run(text[position..match.Index]));
             if (match.Groups["formula"].Success)
             {
-                target.Add(FormulaRun(match.Value));
+                AddFormulaInlines(target, match.Value);
             }
             else if (match.Groups["code"].Success)
             {
@@ -251,12 +461,21 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         if (position < text.Length) target.Add(new Run(text[position..]));
     }
 
-    private static Run FormulaRun(string token)
+    private static void AddFormulaInlines(InlineCollection target, string token)
     {
         var delimiterLength = token.StartsWith('\\') || token.StartsWith("$$", StringComparison.Ordinal) ? 2 : 1;
-        return RagFormulaText.TryFormat(token[delimiterLength..^delimiterLength], out var formatted)
-            ? new Run(formatted) { FontFamily = MathFont }
-            : new Run(token);
+        if (RagFormulaText.TryFormat(token[delimiterLength..^delimiterLength], out var formatted))
+        {
+            var lines = formatted.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (i > 0) target.Add(new LineBreak());
+                target.Add(new Run(lines[i]) { FontFamily = MathFont });
+            }
+            return;
+        }
+
+        target.Add(new Run(token));
     }
 
     private static Brush BrushFromRgb(byte red, byte green, byte blue)

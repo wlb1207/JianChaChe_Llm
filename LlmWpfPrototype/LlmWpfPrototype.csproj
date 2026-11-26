@@ -35,16 +35,19 @@
     <None Update="Config\editable-truss-members.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="Config\design-boundary-profile.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="APDL\original_bridge_car.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="KnowledgeBase\GB_T_3811_2008\gb_t_3811_2008.txt">
+    <None Update="KnowledgeBase\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="KnowledgeBase\GB_T_3811_2008\gb_t_3811_key_rules.json">
+    <None Update="KnowledgeBase\**\*.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="KnowledgeBase\GB_T_3811_2008\verified\**\*.md">
+    <None Update="KnowledgeBase\**\*.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Data\rag_index.json">

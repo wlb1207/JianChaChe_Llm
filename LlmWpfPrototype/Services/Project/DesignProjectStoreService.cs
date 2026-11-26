@@ -344,6 +344,7 @@ public sealed class DesignProjectStoreService
         {
             try { File.Delete(file); } catch { }
         }
+        DeleteConversationLogs(projectId, conversationId);
 
         if (project.Conversations.Count == 0)
         {
@@ -701,12 +702,87 @@ public sealed class DesignProjectStoreService
         WriteJsonAtomically(GetIndexFilePath(), doc);
     }
 
+    private const int MaxPersistedConversationLogs = 1000;
+
+    public List<LogEntryItem> LoadConversationLogs(string projectId, string conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(projectId) || string.IsNullOrWhiteSpace(conversationId))
+        {
+            return [];
+        }
+
+        var path = GetConversationLogFilePath(projectId, conversationId);
+        if (!File.Exists(path))
+        {
+            return [];
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path, Encoding.UTF8);
+            return JsonSerializer.Deserialize<List<LogEntryItem>>(json, JsonOptions) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    public void SaveConversationLogs(string projectId, string conversationId, IEnumerable<LogEntryItem> entries)
+    {
+        if (string.IsNullOrWhiteSpace(projectId) || string.IsNullOrWhiteSpace(conversationId))
+        {
+            return;
+        }
+
+        var list = entries.ToList();
+        var path = GetConversationLogFilePath(projectId, conversationId);
+        if (list.Count == 0)
+        {
+            DeleteConversationLogs(projectId, conversationId);
+            return;
+        }
+
+        if (list.Count > MaxPersistedConversationLogs)
+        {
+            list = list.Skip(list.Count - MaxPersistedConversationLogs).ToList();
+        }
+
+        try
+        {
+            var dir = Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            WriteJsonAtomically(path, list);
+        }
+        catch
+        {
+            // Never let log persistence failure interrupt design operations.
+        }
+    }
+
+    public void DeleteConversationLogs(string projectId, string conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(projectId) || string.IsNullOrWhiteSpace(conversationId))
+        {
+            return;
+        }
+
+        var path = GetConversationLogFilePath(projectId, conversationId);
+        if (File.Exists(path))
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
     private string GetIndexFilePath() => Path.Combine(_storageRoot, "projects-index.json");
 
     private string GetProjectDirectory(string projectId) => Path.Combine(_storageRoot, projectId);
 
     private string GetConversationFilePath(string projectId, string conversationId) =>
         Path.Combine(GetProjectDirectory(projectId), "conversations", $"{conversationId}.json");
+
+    private string GetConversationLogFilePath(string projectId, string conversationId) =>
+        Path.Combine(GetProjectDirectory(projectId), "conversations", $"{conversationId}.logs.json");
 
     private static void WriteJsonAtomically<T>(string path, T value)
     {

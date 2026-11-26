@@ -1,25 +1,231 @@
 {
-    "schemaVersion":  1,
-    "approval":  "User-confirmed E1/E2/E3 content versions; verified metadata is not disclosure authorization",
-    "endpoint":  "https://api.kgnas.top/v1/chat/completions",
-    "documents":  [
-                      {
-                          "file":  "verified/07_allowable_stress.md",
-                          "sha256":  "B0EA459AE69B0D3F4F6CA6D938535AD70A4856298051E8847E01B2D84C608529",
-                          "chunkId":  "verified-rule-0007",
-                          "clause":  "5.2, 5.3, 5.4"
-                      },
-                      {
-                          "file":  "verified/08_safety_factor.md",
-                          "sha256":  "D7FE913ED325D55CD1FECC58454809C058F9900374BFBFFE4D0252D218E2E482",
-                          "chunkId":  "verified-rule-0008",
-                          "clause":  "5.2, 5.3, 4.3"
-                      },
-                      {
-                          "file":  "verified/01_main_girder_strength.md",
-                          "sha256":  "7D0609E07E547AFE69B5EC7E87E9FDE11F442B4E43CA2C4114AADD6492E847A4",
-                          "chunkId":  "verified-rule-0001",
-                          "clause":  "5.3, 5.4"
-                      }
-                  ]
+  "schemaVersion": 2,
+  "approval": "User-confirmed multi-standard engineering knowledge base (GB/T 3811-2008, JT/T 1430-2022, GB 50017-2017)",
+  "endpoint": "https://api.kgnas.top/v1/chat/completions",
+  "documents": [
+    {
+      "file": "verified/01_main_girder_strength.md",
+      "sha256": "3690A4A52FA78F08968947A25CCAD6F833790B6767BE3BB152AE738095AAAF4B",
+      "chunkId": "verified-rule-0001",
+      "clause": "5.1, 5.2, 5.3.1, 5.4.1",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/02_main_girder_stiffness.md",
+      "sha256": "A7B8AD557BB0C9E536DAA8D5BF926F1DA49074E53B63AF6190E3785FE97C6EDB",
+      "chunkId": "verified-rule-0002",
+      "clause": "5.5, 表28",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/03_stability_check.md",
+      "sha256": "59347BF0529F90AB51AC1CEB2E401B97516D9817C35A661547F5DC2AEF06C7D4",
+      "chunkId": "verified-rule-0003",
+      "clause": "5.6, 5.7, 表29, 表30, 附录J, 附录K, 附录L, 附录M, 附录N",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/04_fatigue_check.md",
+      "sha256": "2130305CDCDE93D8E08F673C439B3A51DBCB8E51EB589B3C1C687AFFDDE40308",
+      "chunkId": "verified-rule-0004",
+      "clause": "5.8, 表31, 表32, 表33, 附录O, 表O.1, 表O.2",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/05_load_combination.md",
+      "sha256": "4EBFB64B82F771612758A4D7810E9741BE637BCA895E893C52619325EA4B6D5B",
+      "chunkId": "verified-rule-0005",
+      "clause": "4.1, 4.2, 4.3, 表10-表20, 附录D, 附录E, 附录G.4, 附录H",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/06_working_class.md",
+      "sha256": "1DCEBCF2D100649246AEB045A4DDF43AAB177C5C662A26EE46A3EFEC92A2A173",
+      "chunkId": "verified-rule-0006",
+      "clause": "3.1, 3.2, 3.3, 3.4, 表1-表9, 附录A, 附录B",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/07_allowable_stress.md",
+      "sha256": "B1D2D8A3A5BB535C1E57E10F990A6D9E69394A0CDD1036EAA276E28219CF3A0B",
+      "chunkId": "verified-rule-0007",
+      "clause": "5.3.1.2, 5.3.2.3, 5.4.2.2.2, 表22, 表23, 表24, 表25, 表26, 表27",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/08_safety_factor.md",
+      "sha256": "E5723157ABF13A830C42A6784D1CCC62942802A412F76933259DDC6F893E45B3",
+      "chunkId": "verified-rule-0008",
+      "clause": "4.3.4, 5.2, 5.3.1.2, 表22, 附录F, 附录H, 表H.1",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/09_deflection_requirement.md",
+      "sha256": "35EFDE5DA8B4FE2393C26262183420BE406B3DACE99381D7160F66A64464F5FB",
+      "chunkId": "verified-rule-0009",
+      "clause": "5.5.2, 5.5.3, 5.2.2.2.2, 5.9.1.5",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/10_connection_check.md",
+      "sha256": "2AACBD2684F7C03272F055945A5B5957D3FFA0F9031533EA91AF8CD4AB0FA627",
+      "chunkId": "verified-rule-0010",
+      "clause": "5.3.2, 5.4.1.4, 5.4.2, 表23, 表24, 表25, 表26, 表27, 式35-式41",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/11_overturning_wind.md",
+      "sha256": "4A09754BF0264CCE6376D37387B2AB1C65022A77458B44C617397CC8C409CA4A",
+      "chunkId": "verified-rule-0011",
+      "clause": "8.1, 8.2, 表51-表55, 式142-式145",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/12_test_condition.md",
+      "sha256": "BFBB389A2CE492314FA0969027DBB9BFFF7DF24F200C1AA947F0861A586EC4F0",
+      "chunkId": "verified-rule-0012",
+      "clause": "4.2.3.4, 4.3.3.3, 表20, 附录G.4, 表G.11, 表G.12, 式16",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/13_structural_detailing_and_minimum_thickness.md",
+      "sha256": "CD3CFAE4B1C8F62FAA8EB6A05FE0F199727A95AE381AE1E134FE69689DBCC197",
+      "chunkId": "verified-rule-0013",
+      "clause": "5.9, 表34, 表35, 表36",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/14_brittle_fracture_and_steel_grade.md",
+      "sha256": "6A14E6437838032C486E67DE352F8DCBB1486808FCC2BA22D525C040BC3CAC82",
+      "chunkId": "verified-rule-0014",
+      "clause": "5.3.1.1, 附录I, 表I.1, 表I.2, 式I.1-式I.7",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/15_wheel_rail_and_mechanical_parts.md",
+      "sha256": "BA16F624F236F4C8976964560759CA28BDAF70E422578B643C11933B5B06A516",
+      "chunkId": "verified-rule-0015",
+      "clause": "6.1.2.7, 6.2.1-6.2.4, 6.3.4, 表21, 表42, 表46-表49, 式97-式99, 式130-式133",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "verified/16_structural_safety_clearance_and_guardrails.md",
+      "sha256": "41BC98A3DD1DDE90F74F4F1B2F791A43D37F3BD03EB3261AD0CBC1528DA1FDAB",
+      "chunkId": "verified-rule-0016",
+      "clause": "9.2.2, 9.3.2, 9.3.3, 9.3.4, 表56, 式146",
+      "standard": "GB/T 3811-2008"
+    },
+    {
+      "file": "GB_50017_2017/verified/01_materials_and_design_values.md",
+      "sha256": "1A15365D4582E81BA9A6DBCD98DD1D8BD03F32C72C4A9428F137F3857B57A6E0",
+      "chunkId": "gb_50017_2017-rule-0001",
+      "clause": "4.1, 4.2, 4.3, 4.4, 表4.4.1, 表4.4.3, 表4.4.5, 表4.4.6, 表4.4.8",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/02_section_width_thickness_class.md",
+      "sha256": "1857B9B4FEFEDE2351015B5CE555F4B2ECC875FAC2630E3C53C5D66BCEDA121B",
+      "chunkId": "gb_50017_2017-rule-0002",
+      "clause": "3.5, 表3.5.1, 表3.5.2, 7.3.1, 7.3.4",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/03_deflection_and_deformation.md",
+      "sha256": "286340E455D1A214E215EB80B6EA34B960729BF1656EE5EE314F8E2510D07D7A",
+      "chunkId": "gb_50017_2017-rule-0003",
+      "clause": "3.4, 附录B, 表B.1.1, 表B.2.4-1",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/04_bending_members.md",
+      "sha256": "5C7D1599B2D008FE85F56BCD61018AF77C016E6614A24E4B70CD5F200238B71D",
+      "chunkId": "gb_50017_2017-rule-0004",
+      "clause": "6.1, 6.2, 6.3",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/05_axial_members_and_slenderness.md",
+      "sha256": "67E1AA28968D7BE445814B7E9BE0D9D1E48B838DE32E7582B50BD3B982F0D6A0",
+      "chunkId": "gb_50017_2017-rule-0005",
+      "clause": "7.1, 7.2, 7.3, 7.4, 表7.2.1-1, 表7.4.1-2, 表7.4.6, 表7.4.7",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/06_beam_column_and_truss_secondary_moment.md",
+      "sha256": "416785F3F31C56F7CF4B1304E24DD42CF83407401AFB51387B7EA32337DD8263",
+      "chunkId": "gb_50017_2017-rule-0006",
+      "clause": "5.1.5, 8.1, 8.2, 8.4, 8.5, 表8.1.1, 表8.5.2",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/07_welded_connections.md",
+      "sha256": "863EF78EDD9A51E78D55D52AD66CC512E3A7BBCEF2D326DAF5F859EA4B7D27FD",
+      "chunkId": "gb_50017_2017-rule-0007",
+      "clause": "11.1, 11.2, 11.3, 表11.3.5",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/08_bolted_pin_flange_connections.md",
+      "sha256": "A910F2614EEE3BB8BB28E7C54D97E42B21088EDD73093BC5C2007EC1322C9F73",
+      "chunkId": "gb_50017_2017-rule-0008",
+      "clause": "11.4, 11.5, 11.6, 11.7, 表11.4.2-1, 表11.4.2-2, 表11.5.1, 表11.5.2",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/09_hollow_section_tube_joints.md",
+      "sha256": "E0EC84ABA7E7BDE77FAEAA9304394FC7184ADFE2A19845933D464F6A60FBF195",
+      "chunkId": "gb_50017_2017-rule-0009",
+      "clause": "13.1, 13.2, 13.4, 表13.4.1",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "GB_50017_2017/verified/10_fatigue_brittle_and_corrosion.md",
+      "sha256": "72CBD24E8C7FEE96C04DC3D399827B76C08714E7240426394B64E407BB8C3F44",
+      "chunkId": "gb_50017_2017-rule-0010",
+      "clause": "16.1, 16.2, 16.3, 16.4, 18.2, 表16.2.1-1, 表16.2.4",
+      "standard": "GB 50017-2017"
+    },
+    {
+      "file": "JT_T_1430_2022/verified/01_classification_dimensions.md",
+      "sha256": "AC34F8E8356825784E74B983C3979EE3D3B923D5D325DC00EF3BA81E62735EA4",
+      "chunkId": "jt_t_1430_2022-rule-0001",
+      "clause": "3, 4.1, 4.2, 4.3, 表1, 表2",
+      "standard": "JT/T 1430-2022"
+    },
+    {
+      "file": "JT_T_1430_2022/verified/02_deflection_and_load_capacity.md",
+      "sha256": "C96719D3189914E37628239DCEFE54288C9065A27FDA31656284B1F49D109027",
+      "chunkId": "jt_t_1430_2022-rule-0002",
+      "clause": "5.1.1, 5.1.2, 5.1.3, 5.1.4, 表3",
+      "standard": "JT/T 1430-2022"
+    },
+    {
+      "file": "JT_T_1430_2022/verified/03_materials_and_fasteners.md",
+      "sha256": "D1C131D22F9751DCFE1AC862ABF1AEB1E1E9C9E532C53466F8782594849A70B7",
+      "chunkId": "jt_t_1430_2022-rule-0003",
+      "clause": "5.2, 5.3.1, 5.3.2, 5.3.3, 5.3.4",
+      "standard": "JT/T 1430-2022"
+    },
+    {
+      "file": "JT_T_1430_2022/verified/04_electrical_and_manufacturing.md",
+      "sha256": "970D5EB200C118D5BCE2F66B22E32272CA48C248E8815B48FD7B070FCDA63A85",
+      "chunkId": "jt_t_1430_2022-rule-0004",
+      "clause": "5.4, 5.5",
+      "standard": "JT/T 1430-2022"
+    },
+    {
+      "file": "JT_T_1430_2022/verified/05_safety_requirements.md",
+      "sha256": "FCB5205E64BE09BF5FFC9280135176E876A40009B96AB658A7E37933FD4C3406",
+      "chunkId": "jt_t_1430_2022-rule-0005",
+      "clause": "6.1, 6.2, 6.3, 6.4",
+      "standard": "JT/T 1430-2022"
+    },
+    {
+      "file": "JT_T_1430_2022/verified/06_test_methods_and_wind_test.md",
+      "sha256": "2D73819698CCECC242EFA4E2D44BC6B59E020292EB0DA7410692E1AD654F7280",
+      "chunkId": "jt_t_1430_2022-rule-0006",
+      "clause": "7, 附录A, 附录B",
+      "standard": "JT/T 1430-2022"
+    }
+  ]
 }

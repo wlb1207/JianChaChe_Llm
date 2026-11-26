@@ -5,6 +5,7 @@ using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
 using LlmWpfPrototype.Services.Chat;
 using LlmWpfPrototype.Services.Design;
+using LlmWpfPrototype.Services.Rag;
 using LlmWpfPrototype.Services.Simulation;
 
 namespace LlmWpfPrototype.ViewModels;
@@ -24,8 +25,9 @@ public sealed partial class MainViewModel
         var isApdlSolverConfigured = !string.IsNullOrWhiteSpace(_simulationOptions.SolverPath);
         var isApdlSolverAvailable = IsConfiguredAnsysSolverAvailable();
         var isLightweightStudyConfigured = IsConfiguredLightweightStudyAvailable();
-        var isLocalKnowledgeAvailable = Directory.Exists(
-            Path.Combine(AppContext.BaseDirectory, "KnowledgeBase", "GB_T_3811_2008", "verified"));
+        var kbSearchService = LocalKnowledgeSearchService.CreateForApplication();
+        var kbCatalogSummary = kbSearchService.BuildKnowledgeBaseCatalogSummary();
+        var isLocalKnowledgeAvailable = !kbCatalogSummary.StartsWith("未检测到", StringComparison.Ordinal);
 
         var pendingCadSummary = _pendingBusinessPlan is null
             ? null
@@ -61,63 +63,60 @@ public sealed partial class MainViewModel
             RecentActions: _memoryStore.GetRecentActions(),
             ProjectContextBlock: projectContextBlock,
             LiveStructureDimensionsBlock: liveDimensionsBlock,
-            EngineeringKnowledgeGuidanceBlock: engineeringKnowledgeBlock);
+            EngineeringKnowledgeGuidanceBlock: engineeringKnowledgeBlock,
+            LocalKnowledgeBaseCatalogSummary: isLocalKnowledgeAvailable ? kbCatalogSummary : null);
     }
 
     private string BuildWelcomeMessage()
     {
-        var snapshot = BuildRuntimeContextSnapshot();
-        var apdlCapability = snapshot.IsApdlLauncherAvailable
-            ? "启动本地 ANSYS APDL 开展仿真校核"
-            : "协助准备 ANSYS APDL 分析流程与脚本";
-        var kbCapability = snapshot.IsLocalKnowledgeBaseAvailable
-            ? "，并结合工程规范资料开展多轮持续设计"
-            : string.Empty;
+        var profile = DesignBoundaryProfileLoader.Load();
+        var v = profile.Vehicle;
 
-        if (_projectStore is not null && ActiveProject is { CurrentVersionNumber: > 0 } active)
+        if (_projectStore is not null && ActiveProject is { } active)
         {
-            return $"您好，已进入项目【{active.Name}】。当前杆件截面尺寸：上弦杆 `{active.UpperChord.SpecText} mm`，下弦杆 `{active.LowerChord.SpecText} mm`。您可以继续讨论设计思路、下达截面修改指令或启动仿真校核。";
+            if (active.CurrentVersionNumber > 0)
+            {
+                return $"已进入【{active.Name}（{active.VersionTag}）】· 当前上弦杆 `{active.UpperChord.SpecText} mm`、下弦杆 `{active.LowerChord.SpecText} mm`（已绑定 {v.StandardModelCode} 实体模型及 GB/T 3811 / JT/T 1430 / GB 50017 三规范边界）。";
+            }
+
+            return $"已进入【{active.Name}（{active.VersionTag}）】· 已绑定实车 {v.StandardModelCode}（{v.MaterialGrade}，上/下弦杆 `{active.UpperChord.SpecText} mm`）与 GB/T 3811 / JT/T 1430 / GB 50017 三规范边界，可直接讨论改型、预检改模或联动 APDL 仿真。";
         }
 
-        return $"您好，我是桥梁检查车智能设计助手。当前支持项目级持续设计与多轮会话保存，可协助您操作 SolidWorks 工作模型、实时查询当前杆件截面尺寸、修改桁架构件尺寸（修改前需确认）、{apdlCapability}{kbCapability}。";
+        return $"已绑定实车 {v.StandardModelCode}（{v.MaterialGrade}，母型 `{v.BaselineWidthMm:0.#}×{v.BaselineHeightMm:0.#}×{v.BaselineThicknessMm:0.#} mm`）与 GB/T 3811 / JT/T 1430 / GB 50017 三规范边界，可直接开展设计讨论、参数化改模与仿真校核。";
     }
 
     private string BuildDynamicGreetingReply()
     {
         var snapshot = BuildRuntimeContextSnapshot();
+        var active = ActiveProject;
+        var upper = active?.UpperChord ?? MemberSectionSpecRecord.CreateBaseline("upper_chord", "上弦杆");
+        var lower = active?.LowerChord ?? MemberSectionSpecRecord.CreateBaseline("lower_chord", "下弦杆");
+        var projectLabel = active is not null ? $"【{active.Name}（{active.VersionTag}）】" : "当前设计项目";
+
         var sb = new StringBuilder();
+        sb.Append($"你好！当前{projectLabel}上弦杆为 `{upper.SpecText} mm`、下弦杆为 `{lower.SpecText} mm`");
         sb.Append(snapshot.IsSolidWorksModelOpened
-            ? $"你好！当前 SolidWorks 模型已打开（{(string.IsNullOrWhiteSpace(snapshot.ActiveDocumentName) ? "当前活动模型" : snapshot.ActiveDocumentName)}）。"
-            : "你好！当前尚未检测到已打开的 SolidWorks 工作模型。");
-
-        sb.Append("我可以帮你：");
-        sb.Append(snapshot.IsSolidWorksModelOpened
-            ? "查询可编辑杆件参数、修改已配置的上/下弦杆或下桁架截面与壁厚（修改前会先让你确认）"
-            : "打开当前 SolidWorks 工作模型、查询可编辑参数、修改已配置的桁架构件尺寸");
-
-        if (snapshot.IsApdlLauncherAvailable)
-        {
-            sb.Append("，也可以直接启动本地 ANSYS APDL 启动器或读取轻量化基线");
-        }
-        else
-        {
-            sb.Append("，也可以协助准备 APDL / ANSYS 分析流程或起草脚本");
-        }
-
-        if (snapshot.IsLocalKnowledgeBaseAvailable)
-        {
-            sb.Append("，并支持工程规范资料问答");
-        }
-
+            ? $"，SolidWorks 工作模型已打开（{(string.IsNullOrWhiteSpace(snapshot.ActiveDocumentName) ? "当前活动模型" : snapshot.ActiveDocumentName)}）"
+            : "，三本规范边界与工作区均已就绪");
         sb.Append('。');
 
         if (!string.IsNullOrWhiteSpace(snapshot.PendingCadEditSummary))
         {
-            sb.Append($"（提示：你还有一项待确认修改：{snapshot.PendingCadEditSummary}，可发送“确认修改”或“取消修改”。）");
+            sb.Append($"目前还有一项待确认改模：{snapshot.PendingCadEditSummary}，可直接发送“确认修改”或“取消修改”。");
+            return sb.ToString();
         }
-        else if (!snapshot.IsSolidWorksModelOpened)
+
+        if (active is { CurrentVersionNumber: > 0 })
         {
-            sb.Append("你可以先说“打开当前模型”“查询可编辑参数”，或直接说“打开 APDL”。");
+            sb.Append(snapshot.IsApdlLauncherAvailable
+                ? "这轮是继续迭代另一组弦杆、复核宽厚比与 7.35 m 悬臂挠度红线，还是直接启动 APDL 做仿真对比？"
+                : "这轮是继续迭代另一组弦杆，还是先对照三本规范复核宽厚比与 7.35 m 悬臂挠度红线？");
+        }
+        else
+        {
+            sb.Append(snapshot.IsSolidWorksModelOpened
+                ? "这轮想先评估减薄/扩廓轻量化方案、直接改一组三维截面看规范预检，还是打开 APDL 准备仿真工况？"
+                : "这轮想先评估下弦杆减薄或扩廓减重方案、直接预检调整截面，还是先打开 SolidWorks 工作模型看一下？");
         }
 
         return sb.ToString();
@@ -246,13 +245,14 @@ public sealed partial class MainViewModel
                 $"当前杆件截面尺寸（外宽×外高×壁厚）：{CurrentUpperChordHud}；{CurrentLowerChordHud}。");
         }
 
-        // Allow polite editable-parameter queries, polite model-open requests, live parameter queries,
+        // Allow polite editable-parameter queries, explicit/polite model-open requests, live parameter queries,
         // and APDL launcher candidates to stay action-capable instead of blanket-blocking every '?' / '吗'.
         if (isQuestionOnlyInput &&
             !apdlLaunchCandidate &&
             !hasExplicitModificationCommand &&
             !IsLiveParameterQuery(input) &&
             !ChatTurnRouter.IsPoliteEditableParameterQuery(input, normalizedInput) &&
+            !IsExplicitOpenModelCommand(input, normalizedInput) &&
             !IsPoliteOpenModelExecutionRequest(input, normalizedInput))
         {
             return new ReplyOnlyIntentContext(

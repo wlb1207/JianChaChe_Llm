@@ -1,0 +1,304 @@
+{
+  "schemaVersion": 2,
+  "generatedAtUtc": "2026-11-26T07:26:09Z",
+  "packCount": 3,
+  "totalRuleCount": 32,
+  "packs": [
+    {
+      "packId": "GB_T_3811_2008",
+      "standard": "GB/T 3811-2008",
+      "name": "起重机设计规范（结构与仿真核心版）",
+      "description": "GB/T 3811-2008 起重机设计规范结构与仿真核心知识规则索引（覆盖第3、4、5、6.1.2.7/6.2/6.3.4、8、9.2-9.3章及附录D/E/F/G/H/I/J/K/L/M/N/O，剔除第7章电气及电动机附录P/Q/R/S/U）。",
+      "rulesFile": "GB_T_3811_2008/gb_t_3811_key_rules.json",
+      "ruleCount": 16,
+      "looseMarkdownCount": 3,
+      "rules": [
+        {
+          "id": "GB3811-01",
+          "chunkId": "verified-rule-0001",
+          "sourceDocument": "verified/01_main_girder_strength.md",
+          "topic": "主梁与结构构件强度校核",
+          "clause": "5.1, 5.2, 5.3.1, 5.4.1",
+          "sha256": "3690A4A52FA78F08968947A25CCAD6F833790B6767BE3BB152AE738095AAAF4B"
+        },
+        {
+          "id": "GB3811-02",
+          "chunkId": "verified-rule-0002",
+          "sourceDocument": "verified/02_main_girder_stiffness.md",
+          "topic": "结构刚性、容许长细比与主梁静挠度校核",
+          "clause": "5.5, 表28",
+          "sha256": "A7B8AD557BB0C9E536DAA8D5BF926F1DA49074E53B63AF6190E3785FE97C6EDB"
+        },
+        {
+          "id": "GB3811-03",
+          "chunkId": "verified-rule-0003",
+          "sourceDocument": "verified/03_stability_check.md",
+          "topic": "整体稳定与板件壳体局部屈曲校核",
+          "clause": "5.6, 5.7, 表29, 表30, 附录J, 附录K, 附录L, 附录M, 附录N",
+          "sha256": "59347BF0529F90AB51AC1CEB2E401B97516D9817C35A661547F5DC2AEF06C7D4"
+        },
+        {
+          "id": "GB3811-04",
+          "chunkId": "verified-rule-0004",
+          "sourceDocument": "verified/04_fatigue_check.md",
+          "topic": "结构疲劳强度校核（应力比法与附录O）",
+          "clause": "5.8, 表31, 表32, 表33, 附录O, 表O.1, 表O.2",
+          "sha256": "2130305CDCDE93D8E08F673C439B3A51DBCB8E51EB589B3C1C687AFFDDE40308"
+        },
+        {
+          "id": "GB3811-05",
+          "chunkId": "verified-rule-0005",
+          "sourceDocument": "verified/05_load_combination.md",
+          "topic": "计算载荷、动力系数、风载荷与载荷组合",
+          "clause": "4.1, 4.2, 4.3, 表10-表20, 附录D, 附录E, 附录G.4, 附录H",
+          "sha256": "4EBFB64B82F771612758A4D7810E9741BE637BCA895E893C52619325EA4B6D5B"
+        },
+        {
+          "id": "GB3811-06",
+          "chunkId": "verified-rule-0006",
+          "sourceDocument": "verified/06_working_class.md",
+          "topic": "起重机整机、机构与结构件工作级别",
+          "clause": "3.1, 3.2, 3.3, 3.4, 表1-表9, 附录A, 附录B",
+          "sha256": "1DCEBCF2D100649246AEB045A4DDF43AAB177C5C662A26EE46A3EFEC92A2A173"
+        },
+        {
+          "id": "GB3811-07",
+          "chunkId": "verified-rule-0007",
+          "sourceDocument": "verified/07_allowable_stress.md",
+          "topic": "钢材与连接许用应力（表22至表27）",
+          "clause": "5.3.1.2, 5.3.2.3, 5.4.2.2.2, 表22, 表23, 表24, 表25, 表26, 表27",
+          "sha256": "B1D2D8A3A5BB535C1E57E10F990A6D9E69394A0CDD1036EAA276E28219CF3A0B"
+        },
+        {
+          "id": "GB3811-08",
+          "chunkId": "verified-rule-0008",
+          "sourceDocument": "verified/08_safety_factor.md",
+          "topic": "安全系数与极限状态分项系数",
+          "clause": "4.3.4, 5.2, 5.3.1.2, 表22, 附录F, 附录H, 表H.1",
+          "sha256": "E5723157ABF13A830C42A6784D1CCC62942802A412F76933259DDC6F893E45B3"
+        },
+        {
+          "id": "GB3811-09",
+          "chunkId": "verified-rule-0009",
+          "sourceDocument": "verified/09_deflection_requirement.md",
+          "topic": "主梁与悬臂垂直静挠度要求",
+          "clause": "5.5.2, 5.5.3, 5.2.2.2.2, 5.9.1.5",
+          "sha256": "35EFDE5DA8B4FE2393C26262183420BE406B3DACE99381D7160F66A64464F5FB"
+        },
+        {
+          "id": "GB3811-10",
+          "chunkId": "verified-rule-0010",
+          "sourceDocument": "verified/10_connection_check.md",
+          "topic": "金属结构连接强度校核（焊缝、螺栓与销轴）",
+          "clause": "5.3.2, 5.4.1.4, 5.4.2, 表23, 表24, 表25, 表26, 表27, 式35-式41",
+          "sha256": "2AACBD2684F7C03272F055945A5B5957D3FFA0F9031533EA91AF8CD4AB0FA627"
+        },
+        {
+          "id": "GB3811-11",
+          "chunkId": "verified-rule-0011",
+          "sourceDocument": "verified/11_overturning_wind.md",
+          "topic": "整机抗倾覆稳定性与轨道抗风防滑安全性",
+          "clause": "8.1, 8.2, 表51-表55, 式142-式145",
+          "sha256": "4A09754BF0264CCE6376D37387B2AB1C65022A77458B44C617397CC8C409CA4A"
+        },
+        {
+          "id": "GB3811-12",
+          "chunkId": "verified-rule-0012",
+          "sourceDocument": "verified/12_test_condition.md",
+          "topic": "试验载荷工况与结构验收复核",
+          "clause": "4.2.3.4, 4.3.3.3, 表20, 附录G.4, 表G.11, 表G.12, 式16",
+          "sha256": "BFBB389A2CE492314FA0969027DBB9BFFF7DF24F200C1AA947F0861A586EC4F0"
+        },
+        {
+          "id": "GB3811-13",
+          "chunkId": "verified-rule-0013",
+          "sourceDocument": "verified/13_structural_detailing_and_minimum_thickness.md",
+          "topic": "金属结构构造要求与最小壁厚限值（表34至表36）",
+          "clause": "5.9, 表34, 表35, 表36",
+          "sha256": "CD3CFAE4B1C8F62FAA8EB6A05FE0F199727A95AE381AE1E134FE69689DBCC197"
+        },
+        {
+          "id": "GB3811-14",
+          "chunkId": "verified-rule-0014",
+          "sourceDocument": "verified/14_brittle_fracture_and_steel_grade.md",
+          "topic": "钢材抗脆性破坏评价与质量组别选择（附录I）",
+          "clause": "5.3.1.1, 附录I, 表I.1, 表I.2, 式I.1-式I.7",
+          "sha256": "6A14E6437838032C486E67DE352F8DCBB1486808FCC2BA22D525C040BC3CAC82"
+        },
+        {
+          "id": "GB3811-15",
+          "chunkId": "verified-rule-0015",
+          "sourceDocument": "verified/15_wheel_rail_and_mechanical_parts.md",
+          "topic": "车轮轨道轮压、防打滑黏着系数与通用机械零件强度",
+          "clause": "6.1.2.7, 6.2.1-6.2.4, 6.3.4, 表21, 表42, 表46-表49, 式97-式99, 式130-式133",
+          "sha256": "BA16F624F236F4C8976964560759CA28BDAF70E422578B643C11933B5B06A516"
+        },
+        {
+          "id": "GB3811-16",
+          "chunkId": "verified-rule-0016",
+          "sourceDocument": "verified/16_structural_safety_clearance_and_guardrails.md",
+          "topic": "结构安全要求、限界净距、平台荷载与栏杆刚度",
+          "clause": "9.2.2, 9.3.2, 9.3.3, 9.3.4, 表56, 式146",
+          "sha256": "41BC98A3DD1DDE90F74F4F1B2F791A43D37F3BD03EB3261AD0CBC1528DA1FDAB"
+        }
+      ],
+      "looseMarkdownFiles": [
+        "GB_T_3811_2008/verified/10_structure_classification.md",
+        "GB_T_3811_2008/verified/11_metal_structure_design.md",
+        "GB_T_3811_2008/verified/12_rag_answer_rules.md"
+      ]
+    },
+    {
+      "packId": "GB_50017_2017",
+      "standard": "GB 50017-2017",
+      "name": "钢结构设计标准",
+      "description": "GB 50017-2017 钢结构设计标准结构化设计边界规则索引，覆盖钢材与焊栓强度指标、箱形/方管宽厚比等级、受弯与轴心受力稳定、容许长细比、次弯矩、焊缝/螺栓/法兰连接、矩形钢管节点及疲劳防腐要求。",
+      "rulesFile": "GB_50017_2017/gb_50017_key_rules.json",
+      "ruleCount": 10,
+      "looseMarkdownCount": 0,
+      "rules": [
+        {
+          "id": "GB50017-01",
+          "chunkId": "gb_50017_2017-rule-0001",
+          "sourceDocument": "GB_50017_2017/verified/01_materials_and_design_values.md",
+          "topic": "钢材牌号选用、强度设计值与物理参数",
+          "clause": "4.1, 4.2, 4.3, 4.4, 表4.4.1, 表4.4.3, 表4.4.5, 表4.4.6, 表4.4.8",
+          "sha256": "1A15365D4582E81BA9A6DBCD98DD1D8BD03F32C72C4A9428F137F3857B57A6E0"
+        },
+        {
+          "id": "GB50017-02",
+          "chunkId": "gb_50017_2017-rule-0002",
+          "sourceDocument": "GB_50017_2017/verified/02_section_width_thickness_class.md",
+          "topic": "截面板件宽厚比等级与箱形截面局部稳定限值",
+          "clause": "3.5, 表3.5.1, 表3.5.2, 7.3.1, 7.3.4",
+          "sha256": "1857B9B4FEFEDE2351015B5CE555F4B2ECC875FAC2630E3C53C5D66BCEDA121B"
+        },
+        {
+          "id": "GB50017-03",
+          "chunkId": "gb_50017_2017-rule-0003",
+          "sourceDocument": "GB_50017_2017/verified/03_deflection_and_deformation.md",
+          "topic": "钢结构受弯构件与大跨度桁架变形容许值",
+          "clause": "3.4, 附录B, 表B.1.1, 表B.2.4-1",
+          "sha256": "286340E455D1A214E215EB80B6EA34B960729BF1656EE5EE314F8E2510D07D7A"
+        },
+        {
+          "id": "GB50017-04",
+          "chunkId": "gb_50017_2017-rule-0004",
+          "sourceDocument": "GB_50017_2017/verified/04_bending_members.md",
+          "topic": "受弯构件强度、整体稳定与腹板局部稳定",
+          "clause": "6.1, 6.2, 6.3",
+          "sha256": "5C7D1599B2D008FE85F56BCD61018AF77C016E6614A24E4B70CD5F200238B71D"
+        },
+        {
+          "id": "GB50017-05",
+          "chunkId": "gb_50017_2017-rule-0005",
+          "sourceDocument": "GB_50017_2017/verified/05_axial_members_and_slenderness.md",
+          "topic": "轴心受力构件稳定、钢管桁架计算长度与容许长细比",
+          "clause": "7.1, 7.2, 7.3, 7.4, 表7.2.1-1, 表7.4.1-2, 表7.4.6, 表7.4.7",
+          "sha256": "67E1AA28968D7BE445814B7E9BE0D9D1E48B838DE32E7582B50BD3B982F0D6A0"
+        },
+        {
+          "id": "GB50017-06",
+          "chunkId": "gb_50017_2017-rule-0006",
+          "sourceDocument": "GB_50017_2017/verified/06_beam_column_and_truss_secondary_moment.md",
+          "topic": "拉弯压弯构件计算与承受次弯矩的方箱形桁架杆件",
+          "clause": "5.1.5, 8.1, 8.2, 8.4, 8.5, 表8.1.1, 表8.5.2",
+          "sha256": "416785F3F31C56F7CF4B1304E24DD42CF83407401AFB51387B7EA32337DD8263"
+        },
+        {
+          "id": "GB50017-07",
+          "chunkId": "gb_50017_2017-rule-0007",
+          "sourceDocument": "GB_50017_2017/verified/07_welded_connections.md",
+          "topic": "焊缝质量等级、角焊缝与对接焊缝计算及构造",
+          "clause": "11.1, 11.2, 11.3, 表11.3.5",
+          "sha256": "863EF78EDD9A51E78D55D52AD66CC512E3A7BBCEF2D326DAF5F859EA4B7D27FD"
+        },
+        {
+          "id": "GB50017-08",
+          "chunkId": "gb_50017_2017-rule-0008",
+          "sourceDocument": "GB_50017_2017/verified/08_bolted_pin_flange_connections.md",
+          "topic": "高强度螺栓、销轴连接与钢管法兰连接构造",
+          "clause": "11.4, 11.5, 11.6, 11.7, 表11.4.2-1, 表11.4.2-2, 表11.5.1, 表11.5.2",
+          "sha256": "A910F2614EEE3BB8BB28E7C54D97E42B21088EDD73093BC5C2007EC1322C9F73"
+        },
+        {
+          "id": "GB50017-09",
+          "chunkId": "gb_50017_2017-rule-0009",
+          "sourceDocument": "GB_50017_2017/verified/09_hollow_section_tube_joints.md",
+          "topic": "矩形钢管与方管桁架直接焊接节点构造及计算",
+          "clause": "13.1, 13.2, 13.4, 表13.4.1",
+          "sha256": "E0EC84ABA7E7BDE77FAEAA9304394FC7184ADFE2A19845933D464F6A60FBF195"
+        },
+        {
+          "id": "GB50017-10",
+          "chunkId": "gb_50017_2017-rule-0010",
+          "sourceDocument": "GB_50017_2017/verified/10_fatigue_brittle_and_corrosion.md",
+          "topic": "疲劳容许应力幅、低温防脆断与闭口截面防腐蚀设计",
+          "clause": "16.1, 16.2, 16.3, 16.4, 18.2, 表16.2.1-1, 表16.2.4",
+          "sha256": "72CBD24E8C7FEE96C04DC3D399827B76C08714E7240426394B64E407BB8C3F44"
+        }
+      ],
+      "looseMarkdownFiles": []
+    },
+    {
+      "packId": "JT_T_1430_2022",
+      "standard": "JT/T 1430-2022",
+      "name": "悬挂式桥梁检查车技术条件",
+      "description": "JT/T 1430-2022 悬挂式桥梁检查车技术条件结构化边界规则索引，覆盖分类尺寸、桁架挠度限值、额定载荷、抗风能力、选材工艺、安全护栏与动静载试验边界。",
+      "rulesFile": "JT_T_1430_2022/jt_t_1430_key_rules.json",
+      "ruleCount": 6,
+      "looseMarkdownCount": 0,
+      "rules": [
+        {
+          "id": "JT1430-01",
+          "chunkId": "jt_t_1430_2022-rule-0001",
+          "sourceDocument": "JT_T_1430_2022/verified/01_classification_dimensions.md",
+          "topic": "检查车分类、结构与桁架尺寸规格",
+          "clause": "3, 4.1, 4.2, 4.3, 表1, 表2",
+          "sha256": "AC34F8E8356825784E74B983C3979EE3D3B923D5D325DC00EF3BA81E62735EA4"
+        },
+        {
+          "id": "JT1430-02",
+          "chunkId": "jt_t_1430_2022-rule-0002",
+          "sourceDocument": "JT_T_1430_2022/verified/02_deflection_and_load_capacity.md",
+          "topic": "检查车竖向挠度限值、承载能力与抗风能力",
+          "clause": "5.1.1, 5.1.2, 5.1.3, 5.1.4, 表3",
+          "sha256": "C96719D3189914E37628239DCEFE54288C9065A27FDA31656284B1F49D109027"
+        },
+        {
+          "id": "JT1430-03",
+          "chunkId": "jt_t_1430_2022-rule-0003",
+          "sourceDocument": "JT_T_1430_2022/verified/03_materials_and_fasteners.md",
+          "topic": "检查车材料、紧固件与焊接材料选用",
+          "clause": "5.2, 5.3.1, 5.3.2, 5.3.3, 5.3.4",
+          "sha256": "D1C131D22F9751DCFE1AC862ABF1AEB1E1E9C9E532C53466F8782594849A70B7"
+        },
+        {
+          "id": "JT1430-04",
+          "chunkId": "jt_t_1430_2022-rule-0004",
+          "sourceDocument": "JT_T_1430_2022/verified/04_electrical_and_manufacturing.md",
+          "topic": "检查车电气防护等级与制造焊接装配公差",
+          "clause": "5.4, 5.5",
+          "sha256": "970D5EB200C118D5BCE2F66B22E32272CA48C248E8815B48FD7B070FCDA63A85"
+        },
+        {
+          "id": "JT1430-05",
+          "chunkId": "jt_t_1430_2022-rule-0005",
+          "sourceDocument": "JT_T_1430_2022/verified/05_safety_requirements.md",
+          "topic": "检查车安全装置、护栏尺寸与防风联锁要求",
+          "clause": "6.1, 6.2, 6.3, 6.4",
+          "sha256": "FCB5205E64BE09BF5FFC9280135176E876A40009B96AB658A7E37933FD4C3406"
+        },
+        {
+          "id": "JT1430-06",
+          "chunkId": "jt_t_1430_2022-rule-0006",
+          "sourceDocument": "JT_T_1430_2022/verified/06_test_methods_and_wind_test.md",
+          "topic": "检查车试验工况、1.25倍动载、1.5倍静载与抗风试验",
+          "clause": "7, 附录A, 附录B",
+          "sha256": "2D73819698CCECC242EFA4E2D44BC6B59E020292EB0DA7410692E1AD654F7280"
+        }
+      ],
+      "looseMarkdownFiles": []
+    }
+  ]
+}

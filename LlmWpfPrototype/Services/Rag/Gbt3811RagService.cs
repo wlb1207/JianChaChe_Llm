@@ -30,11 +30,12 @@ public sealed class Gbt3811RagService
     {
         LastErrorMessage = string.Empty;
 
-        var hasVerifiedRules = _knowledgeBaseLoader.TryLoadKeyRuleDocument(out _, out _);
-        var hasLegacyText = _knowledgeBaseLoader.TryLoadKnowledgeBaseText(out _, out var errorMessage);
+        var hasMultiStandardDocs = _knowledgeBaseLoader.TryLoadAllKnowledgeDocuments(out _, out _, out _, out _);
+        var hasVerifiedRules = hasMultiStandardDocs || _knowledgeBaseLoader.TryLoadKeyRuleDocument(out _, out _);
+        var hasLegacyText = hasVerifiedRules || _knowledgeBaseLoader.TryLoadKnowledgeBaseText(out _, out var errorMessage);
         if (!hasVerifiedRules && !hasLegacyText)
         {
-            LastErrorMessage = errorMessage;
+            LastErrorMessage = _knowledgeBaseLoader.LastErrorMessage;
             _knowledgeBaseLoader.EnsureRagIndexFile();
             return [];
         }

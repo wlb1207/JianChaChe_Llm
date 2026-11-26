@@ -10,7 +10,7 @@
     </UserControl.Resources>
     <StackPanel TextElement.FontSize="14" TextElement.Foreground="#FF0F172A">
         <ui:RagFormattedText Markup="{Binding Text}" Citations="{Binding LocalSources}"
-                               HideSourceReferences="True" />
+                               HideSourceReferences="False" />
         <TextBlock Margin="0,8,0,0"
                    Foreground="#FF475569"
                    FontSize="12"
@@ -63,7 +63,7 @@
                                     <StackPanel Margin="0,8,0,2">
                                         <ui:RagFormattedText Markup="{Binding SentText}" Margin="0,6,0,6"
                                                              MaxHeight="260" VerticalScrollBarVisibility="Auto"
-                                                             HideSourceReferences="True" />
+                                                             HideSourceReferences="False" />
                                     </StackPanel>
                                 </Expander>
                             </Border>

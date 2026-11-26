@@ -28,7 +28,8 @@ public sealed record AssistantRuntimeContextSnapshot(
     IReadOnlyList<ActionAuditEntry> RecentActions,
     string? ProjectContextBlock = null,
     string? LiveStructureDimensionsBlock = null,
-    string? EngineeringKnowledgeGuidanceBlock = null)
+    string? EngineeringKnowledgeGuidanceBlock = null,
+    string? LocalKnowledgeBaseCatalogSummary = null)
 {
     public string ToPromptBlock()
     {
@@ -74,7 +75,12 @@ public sealed record AssistantRuntimeContextSnapshot(
             sb.AppendLine($"- 本会话 APDL 启动器记录：已启动 {ApdlLauncherStartCount} 次{timeText}");
         }
 
-        sb.AppendLine($"- 本地工程规范知识库（GB/T 3811-2008）：{(IsLocalKnowledgeBaseAvailable ? "已接入（规范校核类问题会自动检索并附依据引用）" : "未检测到")}");
+        var kbSummary = !IsLocalKnowledgeBaseAvailable
+            ? "未检测到"
+            : string.IsNullOrWhiteSpace(LocalKnowledgeBaseCatalogSummary)
+                ? "已接入（规范校核类问题会自动检索并附依据引用）"
+                : $"已接入可扩展多标准知识库：{LocalKnowledgeBaseCatalogSummary}（规范校核类问题会自动检索并附依据引用）";
+        sb.AppendLine($"- 本地工程规范知识库：{kbSummary}");
 
         if (!string.IsNullOrWhiteSpace(LastModifiedParameterSummary))
         {

@@ -16,9 +16,33 @@ public static class ChatTurnRouter
     private static readonly string[] StrongNormativeTerms =
     [
         "规范", "标准", "校核", "许用", "应力", "安全系数", "强度", "刚度", "挠度",
-        "疲劳", "主梁", "屈服", "稳定性", "倾覆", "风载", "载荷组合", "荷载组合",
-        "工作级别", "金属结构", "符合要求", "合不合规", "合规", "计算书", "连接校核", "工况"
+        "疲劳", "主梁", "屈服", "稳定性", "倾覆", "风载", "抗风", "载荷组合", "荷载组合",
+        "工作级别", "金属结构", "符合要求", "合不合规", "合规", "计算书", "连接校核", "工况",
+        "宽厚比", "长细比", "焊缝", "焊脚", "护栏", "踢脚板", "残余变形", "防腐蚀", "防脆断",
+        "方管节点", "钢管节点", "相贯节点", "法兰连接",
+        "轮压", "车轮", "打滑", "黏着系数", "静载试验", "动载试验", "最小壁厚", "最小厚度",
+        "脆性破坏", "质量组别", "冲击功", "预拱", "预翘", "限界", "净距", "腐蚀等级", "疲劳等级"
     ];
+
+    private static readonly string[] ExplicitNormativeLookupTerms =
+    [
+        "规范", "标准", "条文", "条款", "依据", "符合要求", "合不合规", "合规", "计算书"
+    ];
+
+    private static readonly string[] ModelMemberMentionTerms =
+    [
+        "上弦杆", "下弦杆", "下桁架", "弦杆", "本车", "这台车", "我这个模型", "当前模型", "这个模型"
+    ];
+
+    private static readonly string[] DesignEvaluationTerms =
+    [
+        "怎么样", "行不行", "合适吗", "合理吗", "可以吗", "能不能", "怎么改", "如何改",
+        "怎么优化", "如何优化", "取值范围", "能改到", "减重", "轻量化", "加强", "建议"
+    ];
+
+    private static readonly Regex CandidateSectionMentionRegex = new(
+        @"\d{2,3}(?:\.\d+)?\s*[xX×*]\s*\d{2,3}(?:\.\d+)?(?:\s*[xX×*]\s*\d{1,2}(?:\.\d+)?)?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly string[] SoftwareOrAppTopicTerms =
     [
@@ -28,7 +52,7 @@ public static class ChatTurnRouter
     ];
 
     private static readonly Regex StandardCodeRegex = new(
-        @"GB\s*[/／]?\s*T?\s*\d|\d\s*(MPa|kN)\b",
+        @"(?:GB|JT|JTG|JB|NB|YB)\s*[/／]?\s*T?\s*[A-Z]?\d|\d\s*(MPa|kN)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly Regex CommandPrefixRegex = new(
@@ -75,7 +99,8 @@ public static class ChatTurnRouter
             isAppCapabilityOrStatusQuestion ||
             isExplicitModificationCommand ||
             isApdlLaunchCandidate ||
-            IsProjectParameterOrDesignConsultation(input, normalizedInput))
+            IsProjectParameterOrDesignConsultation(input, normalizedInput) ||
+            IsModelAnchoredDesignEvaluation(input, normalizedInput))
         {
             return false;
         }
@@ -188,6 +213,35 @@ public static class ChatTurnRouter
                normalizedInput.Contains("行不行", StringComparison.Ordinal) ||
                normalizedInput.Contains("合适吗", StringComparison.Ordinal) ||
                normalizedInput.Contains("合理吗", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Keeps model-anchored design evaluations (e.g. "把上弦杆改成 80x80x4 刚度怎么样？" or "下弦杆最小壁厚改成 3 行不行？")
+    /// on the main design advisor path where live SolidWorks/project dimensions and deterministic three-standard
+    /// boundary checks are both available — unless the user explicitly asks for formal standard/clause citation lookup.
+    /// </summary>
+    public static bool IsModelAnchoredDesignEvaluation(string input, string normalizedInput)
+    {
+        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(normalizedInput))
+        {
+            return false;
+        }
+
+        if (StandardCodeRegex.IsMatch(input) ||
+            ExplicitNormativeLookupTerms.Any(term => input.Contains(term, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var referencesModelOrCandidate =
+            ModelMemberMentionTerms.Any(term => input.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+            CandidateSectionMentionRegex.IsMatch(input);
+        if (!referencesModelOrCandidate)
+        {
+            return false;
+        }
+
+        return DesignEvaluationTerms.Any(term => normalizedInput.Contains(term, StringComparison.Ordinal));
     }
 
     public static bool ShouldPreservePendingCadPlan(
