@@ -27,8 +27,21 @@ public sealed partial class SolidWorksService : ISolidWorksService
     };
     private readonly object _syncRoot = new();
     private readonly string _initialModelFolder;
-    private readonly string _workingModelFolder;
+    private string _workingModelFolder;
     private SldWorks? _swApp;
+
+    public string WorkingModelFolder => _workingModelFolder;
+
+    public void SetWorkingModelFolder(string? workingModelFolder)
+    {
+        lock (_syncRoot)
+        {
+            _workingModelFolder = string.IsNullOrWhiteSpace(workingModelFolder)
+                ? string.Empty
+                : NormalizeDirectoryPath(workingModelFolder);
+            _assemblyComponentIndex = null;
+        }
+    }
 
     private sealed record PreparedDimensionUpdate(
         SolidWorksDimensionUpdateRequest Request,

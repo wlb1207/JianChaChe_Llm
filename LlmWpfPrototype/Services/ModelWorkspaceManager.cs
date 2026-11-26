@@ -8,6 +8,7 @@ namespace LlmWpfPrototype.Services;
 public sealed class ModelWorkspaceManager
 {
     private readonly ISolidWorksService? _solidWorksService;
+    private bool _isCustomProjectWorkspace;
 
     public ModelWorkspaceManager(SolidWorksWorkspaceOptions options, ISolidWorksService? solidWorksService = null)
     {
@@ -36,7 +37,65 @@ public sealed class ModelWorkspaceManager
 
     public string LastOpenedDocumentPath { get; private set; } = string.Empty;
 
+    public string DefaultWorkingModelFolder { get; private set; } = string.Empty;
+
     public bool HasOpenedWorkingModel { get; private set; }
+
+    public async Task SwitchProjectWorkspaceAsync(
+        string targetWorkingFolder,
+        bool isDefaultProject,
+        bool isMaterialized,
+        Action<string>? logWriter = null)
+    {
+        var normalizedTarget = string.IsNullOrWhiteSpace(targetWorkingFolder)
+            ? DefaultWorkingModelFolder
+            : NormalizePath(targetWorkingFolder);
+        var previousFolder = WorkingModelFolder;
+
+        if (!string.IsNullOrWhiteSpace(previousFolder) &&
+            !string.Equals(previousFolder, normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
+            _solidWorksService is not null &&
+            _solidWorksService.TryGetActiveDocumentInfoWithoutStartingSolidWorks(out var activePath) &&
+            IsPathInsideRoot(activePath, previousFolder))
+        {
+            logWriter?.Invoke($"[Workspace] 切换项目前安全关闭上一项目已打开文档：{previousFolder}");
+            await _solidWorksService.CloseDocumentsUnderFolderAsync(previousFolder, logWriter);
+        }
+
+        _isCustomProjectWorkspace = !isDefaultProject;
+        WorkingModelFolder = normalizedTarget;
+        (_solidWorksService as SolidWorksService)?.SetWorkingModelFolder(WorkingModelFolder);
+
+        var assemblyExists = !string.IsNullOrWhiteSpace(AssemblyFileName) &&
+                             File.Exists(Path.Combine(WorkingModelFolder, AssemblyFileName));
+        if (isMaterialized || assemblyExists)
+        {
+            var assemblyPath = Path.Combine(WorkingModelFolder, AssemblyFileName);
+            MarkWorkspaceInitialized(WorkingModelFolder, assemblyPath, logWriter);
+        }
+        else
+        {
+            IsWorkspaceInitialized = false;
+            WorkingModelPath = WorkingModelFolder;
+            CurrentAssemblyPath = string.Empty;
+        }
+
+        // Sync HasOpenedWorkingModel with real active document in SolidWorks for this project
+        if (_solidWorksService is not null &&
+            _solidWorksService.TryGetActiveDocumentInfoWithoutStartingSolidWorks(out var currentOpenDoc) &&
+            IsPathInsideRoot(currentOpenDoc, WorkingModelFolder))
+        {
+            HasOpenedWorkingModel = true;
+            LastOpenedDocumentPath = currentOpenDoc;
+            LastOpenedModelPath = Path.Combine(WorkingModelFolder, AssemblyFileName);
+        }
+        else
+        {
+            HasOpenedWorkingModel = false;
+            LastOpenedDocumentPath = string.Empty;
+            LastOpenedModelPath = string.Empty;
+        }
+    }
 
     public async Task EnsureWorkspaceInitializedAsync(Action<string>? logWriter = null)
     {
@@ -280,18 +339,26 @@ public sealed class ModelWorkspaceManager
 
     private void ReloadWorkspaceConfigurationFromAppSettings(Action<string>? logWriter)
     {
+        var preservedCustomFolder = _isCustomProjectWorkspace ? WorkingModelFolder : null;
         var latestOptions = AppConfigLoader.LoadSettings().SolidWorksWorkspace;
         ApplyWorkspaceOptions(latestOptions);
+        if (!string.IsNullOrWhiteSpace(preservedCustomFolder))
+        {
+            WorkingModelFolder = preservedCustomFolder;
+            (_solidWorksService as SolidWorksService)?.SetWorkingModelFolder(WorkingModelFolder);
+        }
         logWriter?.Invoke($"[Workspace] 本次从配置读取初始模型目录 = {InitialModelFolder}");
-        logWriter?.Invoke($"[Workspace] 本次从配置读取新模型目录 = {WorkingModelFolder}");
+        logWriter?.Invoke($"[Workspace] 本次使用新模型工作目录 = {WorkingModelFolder}");
     }
 
     private void ApplyWorkspaceOptions(SolidWorksWorkspaceOptions options)
     {
         ModelRootPath = NormalizePath(options.ModelRootPath);
         InitialModelFolder = NormalizePath(options.InitialModelFolder);
-        WorkingModelFolder = NormalizePath(options.WorkingModelFolder);
+        DefaultWorkingModelFolder = NormalizePath(options.WorkingModelFolder);
+        WorkingModelFolder = DefaultWorkingModelFolder;
         AssemblyFileName = NormalizeRelativePath(options.AssemblyFileName);
+        (_solidWorksService as SolidWorksService)?.SetWorkingModelFolder(WorkingModelFolder);
     }
 
     public bool HasValidModelRootPath()

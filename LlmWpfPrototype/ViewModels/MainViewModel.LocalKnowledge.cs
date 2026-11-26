@@ -14,7 +14,17 @@ public sealed partial class MainViewModel
     private string? _chatRetrievalTopic;
     private AsyncRelayCommand? _cancelChatCommand;
     private AsyncRelayCommand? _confirmBusinessCommand;
-    public string ChatStatus { get => _chatStatus; private set => SetProperty(ref _chatStatus, value); }
+    public string ChatStatus
+    {
+        get => _chatStatus;
+        private set
+        {
+            if (SetProperty(ref _chatStatus, value))
+            {
+                OnPropertyChanged(nameof(BusyBannerText));
+            }
+        }
+    }
     public bool IsChatBusy => _isLocalKnowledgeBusy;
     public bool CanConfirmBusiness => _pendingBusinessPlan is not null && !_isLocalKnowledgeBusy && !_isGeneratingModel
         && !_primaryActionCommand.IsExecuting && DesignStatus == StatusPendingConfirmation && Parameters.Any();
@@ -89,9 +99,10 @@ public sealed partial class MainViewModel
                 result.Answer,
                 result.UserProvenance,
                 result.AnswerProvenance);
+            PersistActiveConversationSnapshot(question);
             if (result.CitedIds.Count > 0 && result.InvalidIds.Count == 0)
             {
-                _llmRuntimeStatus = "在线";
+                SetLlmRuntimeStatus("在线", "模型服务已连接，点击可重新检测");
                 ChatStatus = "回答完成，可展开本轮引用的资料片段。";
             }
             else
@@ -101,7 +112,7 @@ public sealed partial class MainViewModel
         }
         catch (KnowledgeDisclosureException ex)
         {
-            _llmRuntimeStatus = "异常";
+            SetLlmRuntimeStatus("异常", $"资料披露校验异常：{ex.Message}");
             ChatStatus = ex.Message;
             ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
         }
@@ -112,7 +123,7 @@ public sealed partial class MainViewModel
         }
         catch (LocalKnowledgeCallException ex)
         {
-            _llmRuntimeStatus = "异常";
+            SetLlmRuntimeStatus("异常", $"规范问答调用异常：{ex.Message}，点击可重新检测");
             ChatStatus = ex.Message;
             AddAssistantMessage(ChatStatus);
         }
@@ -120,13 +131,13 @@ public sealed partial class MainViewModel
             || ex.Message.StartsWith("当前为离线 Mock", StringComparison.Ordinal)
             || ex.Message.StartsWith("选中资料含", StringComparison.Ordinal))
         {
-            _llmRuntimeStatus = "异常";
+            SetLlmRuntimeStatus("异常", ex.Message);
             ChatStatus = ex.Message;
             ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
         }
         catch
         {
-            _llmRuntimeStatus = "异常";
+            SetLlmRuntimeStatus("异常", "模型问答未完成，请检查网络或配置，点击可重新检测");
             ChatStatus = "模型问答未完成，请检查资料或模型服务配置；未自动重试、未回退模板、未执行工程操作。";
             ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
         }
@@ -135,8 +146,6 @@ public sealed partial class MainViewModel
             _chatCancellation = null;
             _isLocalKnowledgeBusy = false;
             OnPropertyChanged(nameof(IsChatBusy));
-            OnPropertyChanged(nameof(LlmConfigSummary));
-            OnPropertyChanged(nameof(GptStatusSummary));
             RefreshActionState();
         }
     }

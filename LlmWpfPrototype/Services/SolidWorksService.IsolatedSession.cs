@@ -637,4 +637,114 @@ public sealed partial class SolidWorksService
         WriteLog(logWriter, $"ReadOpenDimension. Path={path}; Dimension={name}; Configuration={result.Configuration}; ReferencedConfiguration={result.ReferencedConfiguration}; Components={result.ComponentInstances}; Found={result.Found}; ValueMm={result.CurrentValue}; Detail={result.Message}");
         return Task.FromResult(result);
     }
+
+    public Task<Dictionary<string, (decimal WidthMm, decimal HeightMm, decimal ThicknessMm)>> TryReadLiveMemberSectionsAsync(
+        IReadOnlyList<EditableTrussMemberItem> members,
+        Action<string>? logWriter = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsCadThread)
+            return RunCadCommandAsync(() => TryReadLiveMemberSectionsAsync(members, logWriter, cancellationToken), cancellationToken);
+
+        var measured = new Dictionary<string, (decimal WidthMm, decimal HeightMm, decimal ThicknessMm)>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)))
+                TryGetRunningApplication(out _);
+            if (_swApp?.ActiveDoc is not IModelDoc2 assembly || assembly is not IAssemblyDoc)
+                return Task.FromResult(measured);
+
+            var activePath = assembly.GetPathName();
+            if (string.IsNullOrWhiteSpace(_workingModelFolder) ||
+                string.IsNullOrWhiteSpace(activePath) ||
+                !WorkspaceSafetyPolicy.Within(activePath, _workingModelFolder) ||
+                (!string.IsNullOrWhiteSpace(_initialModelFolder) && WorkspaceSafetyPolicy.Within(activePath, _initialModelFolder)))
+            {
+                return Task.FromResult(measured);
+            }
+
+            foreach (var targetId in new[] { "upper_chord", "lower_chord", "lower_truss" })
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var member = members.FirstOrDefault(m => m.Enabled && string.Equals(m.Id, targetId, StringComparison.OrdinalIgnoreCase));
+                var mapping = member?.PartMappings.FirstOrDefault();
+                if (member is null || mapping is null)
+                    continue;
+
+                var partPath = ResolvePortableMemberPartPathInWorkingFolder(mapping);
+                if (string.IsNullOrWhiteSpace(partPath) || !File.Exists(partPath))
+                    continue;
+
+                try
+                {
+                    var (doc, _, _) = RequireLoadedComponent(assembly, partPath, logWriter, cancellationToken);
+                    var wDim = string.IsNullOrWhiteSpace(mapping.WidthDimensionName) ? null : FindExactDimension(doc, mapping.WidthDimensionName);
+                    var hDim = string.IsNullOrWhiteSpace(mapping.HeightDimensionName) ? null : FindExactDimension(doc, mapping.HeightDimensionName);
+                    if (wDim is null || hDim is null)
+                        continue;
+
+                    var wMm = Convert.ToDecimal(wDim.SystemValue * 1000d);
+                    var hMm = Convert.ToDecimal(hDim.SystemValue * 1000d);
+                    decimal? tMm = null;
+
+                    if (!string.IsNullOrWhiteSpace(mapping.ThicknessDimensionName) &&
+                        FindExactDimension(doc, mapping.ThicknessDimensionName) is { } tDim)
+                    {
+                        tMm = Convert.ToDecimal(tDim.SystemValue * 1000d);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(mapping.InnerWidthDimensionName) &&
+                             FindExactDimension(doc, mapping.InnerWidthDimensionName) is { } innerWDim)
+                    {
+                        var innerWMm = Convert.ToDecimal(innerWDim.SystemValue * 1000d);
+                        var derived = (wMm - innerWMm) / 2m;
+                        if (derived > 0m)
+                            tMm = derived;
+                    }
+
+                    if (wMm > 0m && hMm > 0m && tMm is > 0m)
+                    {
+                        measured[targetId] = (Math.Round(wMm, 3), Math.Round(hMm, 3), Math.Round(tMm.Value, 3));
+                    }
+                }
+                catch (Exception ex) when (ex is not (AccessViolationException or OperationCanceledException))
+                {
+                    WriteLog(logWriter, $"Live section read skipped for {targetId}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not (AccessViolationException or OperationCanceledException))
+        {
+            WriteLog(logWriter, $"Live member section snapshot skipped: {ex.Message}");
+        }
+
+        return Task.FromResult(measured);
+    }
+
+    private string ResolvePortableMemberPartPathInWorkingFolder(EditableTrussMemberPartMapping mapping)
+    {
+        if (string.IsNullOrWhiteSpace(_workingModelFolder))
+            return string.Empty;
+
+        var raw = !string.IsNullOrWhiteSpace(mapping.RelativePartPath)
+            ? mapping.RelativePartPath.Trim()
+            : mapping.PartFilePath.Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return string.Empty;
+
+        var normalized = raw.Replace('/', Path.DirectorySeparatorChar);
+        if (!Path.IsPathRooted(normalized))
+            return NormalizeFilePath(Path.Combine(_workingModelFolder, normalized));
+
+        const string marker = "\\新模型\\";
+        var idx = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0)
+        {
+            var tail = normalized[(idx + marker.Length)..];
+            var candidate = NormalizeFilePath(Path.Combine(_workingModelFolder, tail));
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return NormalizeFilePath(normalized);
+    }
 }

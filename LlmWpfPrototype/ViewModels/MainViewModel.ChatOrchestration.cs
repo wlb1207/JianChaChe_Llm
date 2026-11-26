@@ -4,13 +4,14 @@ using System.Text;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
 using LlmWpfPrototype.Services.Chat;
+using LlmWpfPrototype.Services.Design;
 using LlmWpfPrototype.Services.Simulation;
 
 namespace LlmWpfPrototype.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    private AssistantRuntimeContextSnapshot BuildRuntimeContextSnapshot()
+    private AssistantRuntimeContextSnapshot BuildRuntimeContextSnapshot(string? currentUserInput = null)
     {
         var isModelOpened = _solidWorksService.TryGetActiveDocumentInfoWithoutStartingSolidWorks(out var activeDocumentPath);
         var activeDocumentName = string.IsNullOrWhiteSpace(activeDocumentPath)
@@ -33,6 +34,13 @@ public sealed partial class MainViewModel
             ? BuildPendingSlotSummary(_pendingModificationContext)
             : null;
 
+        var activeProj = _projectStore?.ActiveProject;
+        var projectContextBlock = BuildProjectLongTermMemoryPromptBlock();
+        var liveDimensionsBlock = BuildLiveStructureDimensionsPromptBlock();
+        var engineeringKnowledgeBlock = BridgeCarDesignKnowledgeService.BuildContextualEngineeringGuidance(
+            currentUserInput,
+            activeProj);
+
         return new AssistantRuntimeContextSnapshot(
             IsSolidWorksModelOpened: isModelOpened,
             ActiveDocumentName: activeDocumentName,
@@ -50,20 +58,28 @@ public sealed partial class MainViewModel
             LastModifiedParameterSummary: string.IsNullOrWhiteSpace(_lastModifiedParameterSummary) ? null : _lastModifiedParameterSummary,
             ApdlLauncherStartCount: _memoryStore.ApdlLauncherStartCount,
             LastApdlLauncherStartedAt: _memoryStore.LastApdlLauncherStartedAt,
-            RecentActions: _memoryStore.GetRecentActions());
+            RecentActions: _memoryStore.GetRecentActions(),
+            ProjectContextBlock: projectContextBlock,
+            LiveStructureDimensionsBlock: liveDimensionsBlock,
+            EngineeringKnowledgeGuidanceBlock: engineeringKnowledgeBlock);
     }
 
     private string BuildWelcomeMessage()
     {
         var snapshot = BuildRuntimeContextSnapshot();
         var apdlCapability = snapshot.IsApdlLauncherAvailable
-            ? "启动本地 ANSYS APDL 启动器、读取轻量化基线"
-            : "咨询 APDL / ANSYS 分析准备与脚本起草";
+            ? "启动本地 ANSYS APDL 开展仿真校核"
+            : "协助准备 ANSYS APDL 分析流程与脚本";
         var kbCapability = snapshot.IsLocalKnowledgeBaseAvailable
-            ? "，也可基于本地 GB/T 3811-2008 资料解答工程规范问题"
+            ? "，并结合工程规范资料开展多轮持续设计"
             : string.Empty;
 
-        return $"您好，我是桥梁检查车智能设计助手。我可以协助你操作 SolidWorks 工作模型、查询或修改已配置的桁架构件尺寸（修改前会先请你确认）、{apdlCapability}{kbCapability}。请直接说明需求，或输入“你能做什么”。";
+        if (_projectStore is not null && ActiveProject is { CurrentVersionNumber: > 0 } active)
+        {
+            return $"您好，已进入项目【{active.Name}】。当前杆件截面尺寸：上弦杆 `{active.UpperChord.SpecText} mm`，下弦杆 `{active.LowerChord.SpecText} mm`。您可以继续讨论设计思路、下达截面修改指令或启动仿真校核。";
+        }
+
+        return $"您好，我是桥梁检查车智能设计助手。当前支持项目级持续设计与多轮会话保存，可协助您操作 SolidWorks 工作模型、实时查询当前杆件截面尺寸、修改桁架构件尺寸（修改前需确认）、{apdlCapability}{kbCapability}。";
     }
 
     private string BuildDynamicGreetingReply()
@@ -220,6 +236,14 @@ public sealed partial class MainViewModel
                 UserIntentKind.CapabilityQuestion,
                 "OpenModelCapabilityQuestion",
                 BuildQuestionOnlySafetyReply(input));
+        }
+
+        if (isQuestionOnlyInput && ChatTurnRouter.IsCurrentStructureDimensionQuestion(input, normalizedInput))
+        {
+            return new ReplyOnlyIntentContext(
+                UserIntentKind.Unknown,
+                "CurrentStructureDimensionQuestion",
+                $"当前杆件截面尺寸（外宽×外高×壁厚）：{CurrentUpperChordHud}；{CurrentLowerChordHud}。");
         }
 
         // Allow polite editable-parameter queries, polite model-open requests, live parameter queries,

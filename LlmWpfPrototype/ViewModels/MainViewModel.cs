@@ -12,6 +12,8 @@ using System.Windows.Threading;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
 using LlmWpfPrototype.Services.Chat;
+using LlmWpfPrototype.Services.Design;
+using LlmWpfPrototype.Services.Project;
 using LlmWpfPrototype.Services.Simulation;
 
 namespace LlmWpfPrototype.ViewModels;
@@ -177,7 +179,8 @@ public sealed partial class MainViewModel : ObservableObject
         TrussParameterMappingRecommendationService trussParameterMappingRecommendationService,
         TrussMemberCommandParser trussMemberCommandParser,
         SimulationOptions? simulationOptions = null,
-        Action<string>? startAnsysLauncher = null)
+        Action<string>? startAnsysLauncher = null,
+        DesignProjectStoreService? projectStore = null)
     {
         _llmService = llmService;
         _parameterDictionaryService = parameterDictionaryService;
@@ -193,6 +196,12 @@ public sealed partial class MainViewModel : ObservableObject
         _trussMemberCommandParser = trussMemberCommandParser;
         _simulationOptions = simulationOptions ?? new SimulationOptions();
         _startAnsysLauncher = startAnsysLauncher ?? StartAnsysLauncher;
+        _llmRuntimeStatus = string.Equals(_options.Mode, "Mock", StringComparison.OrdinalIgnoreCase)
+            ? "离线模拟"
+            : "连接中...";
+        _llmStatusTooltip = string.Equals(_options.Mode, "Mock", StringComparison.OrdinalIgnoreCase)
+            ? "当前为本地模拟模式（不访问云端模型）"
+            : "正在检测大模型服务连通性...";
         _llmService.DiagnosticLogEmitted += message => AppendLog(message, source: "LlmService");
 
         ChatMessages = new ObservableCollection<ChatMessage>();
@@ -205,6 +214,8 @@ public sealed partial class MainViewModel : ObservableObject
         EditableTrussMemberMappings = new ObservableCollection<EditableTrussMemberMappingItemViewModel>();
 
         _primaryActionCommand = new AsyncRelayCommand(HandlePrimaryActionAsync, CanExecutePrimaryAction);
+        _primaryActionCommand.CanExecuteChanged += (_, _) => NotifyUiBusyAndConfirmationChanged();
+        ChatMessages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(ShowWelcomeQuickPrompts));
         _clearConversationCommand = new AsyncRelayCommand(ClearConversationAsync, () => !_isLocalKnowledgeBusy && !_isGeneratingModel);
         _reparseCommand = new AsyncRelayCommand(ReparseAsync, CanReparse);
         _toggleAdvancedDebugCommand = new AsyncRelayCommand(ToggleAdvancedDebugAsync);
@@ -254,7 +265,7 @@ public sealed partial class MainViewModel : ObservableObject
         AppendLog("[VersionMarker] LinkedRedTubeCompensation runtime v1 loaded");
         AppendLog("[VersionMarker] DeterministicLowerTrussGuard runtime v1 loaded");
         AppendLog("[VersionMarker] UnifiedChatOrchestrator runtime v2 loaded");
-        AddAssistantMessage(BuildWelcomeMessage());
+        InitializeProjectManagement(projectStore);
     }
 
     public ObservableCollection<ChatMessage> ChatMessages { get; }
@@ -316,6 +327,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _userInput, value))
             {
+                SaveDraftInputIfReady();
                 RefreshActionState();
             }
         }
@@ -336,7 +348,13 @@ public sealed partial class MainViewModel : ObservableObject
     public string StatusMessage
     {
         get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
+        private set
+        {
+            if (SetProperty(ref _statusMessage, value))
+            {
+                OnPropertyChanged(nameof(BusyBannerText));
+            }
+        }
     }
 
     public string ApdlPreviewContent
@@ -661,6 +679,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        await EnsureActiveProjectForIncomingMessageAsync();
         AddUserMessage(input);
         if (IsSimulationChatCommand(input))
         {
@@ -791,8 +810,8 @@ public sealed partial class MainViewModel : ObservableObject
             var hasNormativeSignal = ChatTurnRouter.HasStrongNormativeEngineeringSignal(input);
             var canTryDeterministicCadEdit = !isNegativeOrCancel && !isQuestionOnlyInput && !hasNormativeSignal;
 
-            StatusMessage = "正在识别设计参数。";
-            AppendLog("开始解析设计需求。");
+            StatusMessage = "正在思考并分析您的问题，请稍候...";
+            AppendLog("开始分析用户输入。");
             AppendLog($"[System] UserInput=<redacted> Length={input.Length}");
             if (canTryDeterministicCadEdit)
             {
@@ -897,8 +916,13 @@ public sealed partial class MainViewModel : ObservableObject
             AppendLog("[Intent] OrdinaryInputRoutedTo=LLM");
             AppendLog(BuildCurrentSessionStateLog(input));
 
+            if (ChatTurnRouter.IsCurrentStructureDimensionQuestion(input, normalizedInput))
+            {
+                await RefreshLiveCadDimensionsSilentlyAsync();
+            }
+
             var mainHistory = _memoryStore.GetMainChatHistory();
-            var runtimeContextSummary = BuildRuntimeContextSnapshot().ToPromptBlock();
+            var runtimeContextSummary = BuildRuntimeContextSnapshot(input).ToPromptBlock();
             AppendLog($"[ConversationHistory] BeforeRequest HistoryCount={mainHistory.Count}");
             AppendLog($"[ConversationHistory] RequestMessages.Count={mainHistory.Count + 2}");
             var requestOptions = apdlLaunchCandidate
@@ -920,9 +944,7 @@ public sealed partial class MainViewModel : ObservableObject
                         RuntimeContextSummary: runtimeContextSummary);
             var json = await _llmService.ParseDesignRequirementAsync(input, mainHistory, requestOptions);
             JsonOutput = FormatJson(json);
-            _llmRuntimeStatus = "在线";
-            OnPropertyChanged(nameof(LlmConfigSummary));
-            OnPropertyChanged(nameof(GptStatusSummary));
+            SetLlmRuntimeStatus("在线", "模型服务已连接，点击可重新检测");
 
             var parseResult = DeserializeParseResult(json);
             if (parseResult is null)
@@ -945,9 +967,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             if (replyOnlyIntent is not null)
             {
-                _llmRuntimeStatus = "异常";
-                OnPropertyChanged(nameof(LlmConfigSummary));
-                OnPropertyChanged(nameof(GptStatusSummary));
+                SetLlmRuntimeStatus("异常", "模型返回格式解析失败，点击可重新检测");
                 if (_pendingBusinessPlan is null)
                 {
                     DesignStatus = StatusWaitingInput;
@@ -971,9 +991,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            _llmRuntimeStatus = "异常";
-            OnPropertyChanged(nameof(LlmConfigSummary));
-            OnPropertyChanged(nameof(GptStatusSummary));
+            SetLlmRuntimeStatus("异常", "模型返回格式解析失败，点击可重新检测");
             if (_pendingBusinessPlan is null)
             {
                 DesignStatus = StatusFailed;
@@ -990,9 +1008,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             if (replyOnlyIntent is not null)
             {
-                _llmRuntimeStatus = "异常";
-                OnPropertyChanged(nameof(LlmConfigSummary));
-                OnPropertyChanged(nameof(GptStatusSummary));
+                SetLlmRuntimeStatus("异常", $"模型连接异常：{ex.Message}，点击立即重试");
                 if (_pendingBusinessPlan is null)
                 {
                     DesignStatus = StatusWaitingInput;
@@ -1015,9 +1031,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            _llmRuntimeStatus = "异常";
-            OnPropertyChanged(nameof(LlmConfigSummary));
-            OnPropertyChanged(nameof(GptStatusSummary));
+            SetLlmRuntimeStatus("异常", $"模型连接异常：{ex.Message}，点击立即重试");
             if (_pendingBusinessPlan is null)
             {
                 DesignStatus = StatusFailed;
@@ -1107,24 +1121,7 @@ public sealed partial class MainViewModel : ObservableObject
                 _lastSuccessfulActionSummary = "当前模型已经打开";
                 StatusMessage = "已打开桥梁检查车模型。";
                 AppendLog("[Intent] OpenModelCommandCompleted=True");
-                AddAssistantMessage("""
-模型已打开。
-
-您现在可以修改桁架构件参数：
-- 桁架上弦杆
-- 桁架下弦杆
-
-支持的修改方式：
-- 单独修改截面
-- 单独修改壁厚
-- 同时修改截面和壁厚
-
-示例：
-把桁架上弦杆截面改成 80x80
-把桁架上弦杆壁厚改成 6
-把桁架上弦杆截面改成 80x80，壁厚改成 6
-把下弦杆改成 80x80x6
-""".Trim());
+                AddAssistantMessage(BuildModelOpenedGuidanceReply());
                 return;
             }
 
@@ -1376,6 +1373,7 @@ public sealed partial class MainViewModel : ObservableObject
                     BuildDispatchActionAuditSummary(parseResult, dispatchResult),
                     dispatchResult.Succeeded,
                     ConversationTurnKind.CadAction);
+                PersistActiveConversationSnapshot(userInput);
             }
             else
             {
@@ -1521,6 +1519,7 @@ public sealed partial class MainViewModel : ObservableObject
         ClearConversationHistory("clear_conversation");
         AppendLog("已开启新的设计会话，工作区标记已重置为未初始化。");
         AddAssistantMessage("对话已清空。你可以继续让我打开当前模型、查询可编辑参数，或直接告诉我要修改的尺寸值。");
+        PersistActiveConversationSnapshot();
         RefreshSummaryProperties();
         RefreshActionState();
     }
@@ -1528,6 +1527,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void AppendConversationHistory(string userInput, string assistantReply)
     {
         _memoryStore.RecordChatTurn(userInput, assistantReply);
+        PersistActiveConversationSnapshot(userInput);
         AppendLog("[ConversationHistory] Appended UserAndAssistant=True");
     }
 
@@ -1553,12 +1553,26 @@ public sealed partial class MainViewModel : ObservableObject
         if (actions.Any(action => string.Equals(action, "open_working_model", StringComparison.OrdinalIgnoreCase)))
         {
             ClearPendingModificationContext("open_working_model");
+            if (_projectStore is not null && ActiveProject is { } openProject)
+            {
+                openProject.IsWorkspaceMaterialized = true;
+                _projectStore.SaveProject(openProject);
+                RefreshProjectHudProperties();
+                RebuildProjectSidebarItems();
+            }
             return;
         }
 
         if (actions.Any(action => string.Equals(action, "reset_model_workspace", StringComparison.OrdinalIgnoreCase)))
         {
             ClearPendingModificationContext("reset_model_workspace");
+            if (_projectStore is not null && ActiveProject is { } resetProject)
+            {
+                _projectStore.ResetProjectSnapshotToBaseline(resetProject);
+                SyncVersionHistoryCollection();
+                RefreshProjectHudProperties();
+                RebuildProjectSidebarItems();
+            }
         }
     }
 
@@ -1663,7 +1677,7 @@ public sealed partial class MainViewModel : ObservableObject
         };
 
         AppendLog($"[PendingModification] Created TargetMember={targetMember} MissingSlot=size");
-        reply = $"要把{targetMemberDisplayName}截面改成多少？可以直接输入类似 80x80x6 的尺寸。";
+        reply = $"要把{targetMemberDisplayName}截面改成多少？可以直接输入类似 60x60、70x70x4 或 65x65x4 的轻量化尺寸。";
         return true;
     }
 
@@ -2012,6 +2026,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         const string testPrompt = "请只回复 pong";
 
+        SetLlmRuntimeStatus("连接中...", "正在执行详细连通性测试...");
         AppendLog("[LLM Test] 开始测试大模型连接。");
         var result = await _llmService.TestConnectionAsync(testPrompt);
 
@@ -2036,17 +2051,14 @@ public sealed partial class MainViewModel : ObservableObject
 
         if (result.Succeeded)
         {
-            _llmRuntimeStatus = "在线";
+            SetLlmRuntimeStatus("在线", $"模型服务已连接（耗时 {result.ElapsedMilliseconds ?? 0} ms），点击可重新检测");
             StatusMessage = "LLM 连接测试成功。";
         }
         else
         {
-            _llmRuntimeStatus = "异常";
+            SetLlmRuntimeStatus("异常", $"连接测试失败：{result.ExceptionMessage ?? "未知错误"}，点击立即重试");
             StatusMessage = $"LLM 连接测试失败：{result.ExceptionMessage ?? "未知错误"}";
         }
-
-        OnPropertyChanged(nameof(LlmConfigSummary));
-        OnPropertyChanged(nameof(GptStatusSummary));
     }
 
     private Task OpenDimensionScanCsvAsync()
@@ -3370,6 +3382,24 @@ public sealed partial class MainViewModel : ObservableObject
             _hasUnsavedModelChanges = false;
             _hasQueriedEditableParameters = false;
             _lastSuccessfulActionSummary = "当前模型已经打开";
+            if (_projectStore is not null && ActiveProject is { } openedProject)
+            {
+                openedProject.IsWorkspaceMaterialized = true;
+                _projectStore.SaveProject(openedProject);
+                RefreshProjectHudProperties();
+                RebuildProjectSidebarItems();
+            }
+        }
+
+        if (actions.Any(action => string.Equals(action, "reset_model_workspace", StringComparison.OrdinalIgnoreCase)) && dispatchSucceeded)
+        {
+            if (_projectStore is not null && ActiveProject is { } resetProject)
+            {
+                _projectStore.ResetProjectSnapshotToBaseline(resetProject);
+                SyncVersionHistoryCollection();
+                RefreshProjectHudProperties();
+                RebuildProjectSidebarItems();
+            }
         }
 
         if (isQueryEditableParametersAction && dispatchSucceeded)
@@ -3393,7 +3423,9 @@ public sealed partial class MainViewModel : ObservableObject
             _hasUnsavedModelChanges = false;
             _workflowStage = AssistantWorkflowStage.Saved;
             UpdateModificationProfile(parseResult, _lastModifiedParameterSummary);
+            RecordConfirmedModificationIntoProject(parseResult, _lastModifiedParameterSummary);
             ClearPendingModificationContext("modification_succeeded");
+            PersistActiveConversationSnapshot();
 
             AppendLog("[Workflow] ModificationSucceeded=True");
             AppendLog($"[Workflow] LastModifiedParameterSummary={_lastModifiedParameterSummary}");
@@ -3675,28 +3707,35 @@ public sealed partial class MainViewModel : ObservableObject
         return details;
     }
 
+    private string BuildModelOpenedGuidanceReply()
+    {
+        var upperSpec = _projectStore is not null && ActiveProject is { } active
+            ? active.UpperChord.SpecText
+            : "70×70×5";
+        var lowerSpec = _projectStore is not null && ActiveProject is { } activeLower
+            ? activeLower.LowerChord.SpecText
+            : "70×70×5";
+
+        return $"""
+模型已打开。当前杆件截面尺寸（外宽×外高×壁厚）：上弦杆 `{upperSpec} mm`，下弦杆 `{lowerSpec} mm`。
+
+当前支持修改的构件：
+- 桁架上弦杆、桁架下弦杆（支持单独修改截面、单独修改壁厚或同时修改）
+
+修改指令示例：
+- 修改截面：`把桁架上弦杆截面改成 60x60`
+- 修改壁厚：`把桁架上弦杆壁厚改成 4`
+- 同时修改：`把桁架下弦杆改成 65x65x4`
+
+您可以直接告诉我需要调整的截面尺寸，或后续结合 ANSYS APDL 仿真校核结果再做进一步优化。
+""".Trim();
+    }
+
     private string BuildOpenModelUserReply(CommandDispatchResult dispatchResult, string fallbackReply)
     {
         if (dispatchResult.Succeeded)
         {
-            return """
-模型已打开。
-
-您现在可以修改桁架构件参数：
-- 桁架上弦杆
-- 桁架下弦杆
-
-支持的修改方式：
-- 单独修改截面
-- 单独修改壁厚
-- 同时修改截面和壁厚
-
-示例：
-把桁架上弦杆截面改成 80x80
-把桁架上弦杆壁厚改成 6
-把桁架上弦杆截面改成 80x80，壁厚改成 6
-把下弦杆改成 80x80x6
-""".Trim();
+            return BuildModelOpenedGuidanceReply();
         }
 
         var reason = string.IsNullOrWhiteSpace(fallbackReply)
@@ -3913,7 +3952,7 @@ public sealed partial class MainViewModel : ObservableObject
 2. 修改某个杆件尺寸；
 3. 指定目标截面或壁厚让我帮您调整。
 
-例如您可以说：“把桁架上弦杆截面改成 80x80”。
+例如您可以说：“把桁架上弦杆截面改成 60x60”或“把上弦杆壁厚改成 4”。
 """.Trim(),
             AssistantWorkflowStage.ModificationSucceededUnsaved => BuildAfterModificationNextStepMessage(false),
             AssistantWorkflowStage.Saved => BuildAfterModificationNextStepMessage(true),
@@ -4082,6 +4121,9 @@ public sealed partial class MainViewModel : ObservableObject
         _copyCurrentLogsCommand.RaiseCanExecuteChanged();
         _openLogFileCommand.RaiseCanExecuteChanged();
         _showErrorsOnlyCommand.RaiseCanExecuteChanged();
+        _confirmBusinessCommand?.RaiseCanExecuteChanged();
+        _cancelChatCommand?.RaiseCanExecuteChanged();
+        NotifyUiBusyAndConfirmationChanged();
     }
 
     private void RefreshScanState(SolidWorksDimensionScanResult? latestResult = null)
@@ -4349,14 +4391,14 @@ public sealed partial class MainViewModel : ObservableObject
 我还没有理解您的意思。
 
 请直接输入明确的修改命令，例如：
-把桁架上弦杆截面改成 80x80，壁厚改成 6
+把桁架上弦杆截面改成 60x60，或把下弦杆改成 70x70x4
 """.Trim()
                 : """
 我还没有理解您的意思。
 
 当前还没有打开模型。
 请先输入：
-开启前桁架检查车模型
+打开当前模型
 """.Trim()
         };
     }
@@ -4384,7 +4426,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改{member}，但还需要说明要修改截面、壁厚，还是同时修改截面和壁厚。
 
 请直接输入类似：
-把桁架{member}截面改成 80x80，壁厚改成 6
+把桁架{member}截面改成 60x60，壁厚改成 4
 """.Trim();
         }
 
@@ -4394,7 +4436,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改截面，但还需要说明构件和目标截面。
 
 请直接输入类似：
-把桁架上弦杆截面改成 80x80
+把桁架上弦杆截面改成 60x60
 """.Trim();
         }
 
@@ -4404,7 +4446,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改壁厚，但还需要说明构件和目标壁厚。
 
 请直接输入类似：
-把桁架上弦杆壁厚改成 6
+把桁架上弦杆壁厚改成 4
 """.Trim();
         }
 
@@ -4414,7 +4456,7 @@ public sealed partial class MainViewModel : ObservableObject
 您提供了目标截面 {sectionSize}，但还需要说明要修改哪个构件。
 
 请直接输入类似：
-把桁架上弦杆截面改成 80x80
+把桁架上弦杆截面改成 60x60
 """.Trim();
         }
 
@@ -4424,7 +4466,7 @@ public sealed partial class MainViewModel : ObservableObject
 您提供了目标壁厚 {thickness}mm，但还需要说明要修改哪个构件。
 
 请直接输入类似：
-把桁架上弦杆壁厚改成 6
+把桁架上弦杆壁厚改成 4
 """.Trim();
         }
 
@@ -4439,10 +4481,10 @@ public sealed partial class MainViewModel : ObservableObject
 您提到了{member}和数值 {singleNumericValue}，但还需要说明参数类型。
 
 如果要改截面，请输入：
-把桁架{member}截面改成 80x80
+把桁架{member}截面改成 60x60
 
 如果要改壁厚，请输入：
-把桁架{member}壁厚改成 6
+把桁架{member}壁厚改成 4
 """.Trim();
         }
 
@@ -4452,7 +4494,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改桁架，但还需要说明具体构件、参数和目标值。
 
 请直接输入类似：
-把桁架上弦杆截面改成 80x80，壁厚改成 6
+把桁架上弦杆截面改成 60x60，壁厚改成 4
 """.Trim();
         }
 
@@ -4462,7 +4504,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改截面，但还需要说明构件和目标截面。
 
 请直接输入类似：
-把桁架上弦杆截面改成 80x80
+把桁架上弦杆截面改成 60x60
 """.Trim();
         }
 
@@ -4472,7 +4514,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改壁厚，但还需要说明构件和目标壁厚。
 
 请直接输入类似：
-把桁架上弦杆壁厚改成 6
+把桁架上弦杆壁厚改成 4
 """.Trim();
         }
 
@@ -4480,7 +4522,7 @@ public sealed partial class MainViewModel : ObservableObject
 您想修改模型，但信息还不完整。
 
 请说明构件、参数和目标值，例如：
-把桁架上弦杆截面改成 80x80，壁厚改成 6
+把桁架上弦杆截面改成 60x60，壁厚改成 4
 """.Trim();
     }
 

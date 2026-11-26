@@ -146,6 +146,113 @@ public sealed partial class LlmService : ILlmService
 
 
 
+    public async Task<LlmConnectionTestResult> ProbeConnectivityAsync(CancellationToken cancellationToken = default)
+    {
+        if (string.Equals(_options.Mode, "Mock", StringComparison.OrdinalIgnoreCase))
+        {
+            return new LlmConnectionTestResult(
+                true, _options.ApiBaseUrl, _options.Model, false,
+                200, 0, null, "mock", "Mock", 0, 0, 0, "stop",
+                "mock", "mock", null, null, null, null);
+        }
+
+        var apiKey = GetApiKey();
+        var apiKeyExists = !string.IsNullOrWhiteSpace(apiKey);
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            EnsureProviderIsSupported();
+            if (string.IsNullOrWhiteSpace(_options.ApiBaseUrl))
+            {
+                throw new InvalidOperationException("未配置 ApiBaseUrl。");
+            }
+
+            if (string.IsNullOrWhiteSpace(_options.Model))
+            {
+                throw new InvalidOperationException("未配置模型名称。");
+            }
+
+            var modelsUrl = BuildModelsUrl(_options.ApiBaseUrl);
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            probeCts.CancelAfter(TimeSpan.FromSeconds(8));
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, modelsUrl);
+            if (apiKeyExists)
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            }
+
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
+            stopwatch.Stop();
+
+            if (response.IsSuccessStatusCode)
+            {
+                EmitDiagnostic($"[LLM Probe] Zero-token models probe succeeded. HTTP={(int)response.StatusCode}, ElapsedMs={stopwatch.ElapsedMilliseconds}");
+                return new LlmConnectionTestResult(
+                    true, _options.ApiBaseUrl, _options.Model, apiKeyExists,
+                    (int)response.StatusCode, stopwatch.ElapsedMilliseconds,
+                    null, "models_probe", _options.Model, 0, 0, 0, "ok",
+                    "ok", "ok", null, null, null, null);
+            }
+
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return new LlmConnectionTestResult(
+                    false, _options.ApiBaseUrl, _options.Model, apiKeyExists,
+                    (int)response.StatusCode, stopwatch.ElapsedMilliseconds,
+                    null, null, null, null, null, null, null,
+                    string.Empty, string.Empty, null,
+                    nameof(HttpRequestException),
+                    $"鉴权失败（HTTP {(int)response.StatusCode}），请检查 API Key",
+                    null);
+            }
+
+            // Proxy/gateway does not expose GET /models -> fall back to minimal chat ping
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+            {
+                EmitDiagnostic($"[LLM Probe] /models returned HTTP {(int)response.StatusCode}; falling back to minimal ping.");
+                return await TestConnectionAsync("pong", cancellationToken);
+            }
+
+            return new LlmConnectionTestResult(
+                false, _options.ApiBaseUrl, _options.Model, apiKeyExists,
+                (int)response.StatusCode, stopwatch.ElapsedMilliseconds,
+                null, null, null, null, null, null, null,
+                string.Empty, string.Empty, null,
+                nameof(HttpRequestException),
+                $"服务返回 HTTP {(int)response.StatusCode}",
+                null);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            return new LlmConnectionTestResult(
+                false, _options.ApiBaseUrl, _options.Model, apiKeyExists,
+                null, stopwatch.ElapsedMilliseconds,
+                null, null, null, null, null, null, null,
+                string.Empty, string.Empty, null,
+                nameof(TimeoutException),
+                "连接超时，请检查网络或代理设置",
+                null);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            var friendly = ex.InnerException?.Message.Contains("EOF", StringComparison.OrdinalIgnoreCase) == true ||
+                           ex.Message.Contains("SSL", StringComparison.OrdinalIgnoreCase)
+                ? "安全连接中断，请检查系统代理或网络状态"
+                : ex.Message;
+            return new LlmConnectionTestResult(
+                false, _options.ApiBaseUrl, _options.Model, apiKeyExists,
+                null, stopwatch.ElapsedMilliseconds,
+                null, null, null, null, null, null, null,
+                string.Empty, string.Empty, null,
+                ex.GetType().Name,
+                friendly,
+                ex.InnerException?.Message);
+        }
+    }
+
     public async Task<LlmConnectionTestResult> TestConnectionAsync(string userInput, CancellationToken cancellationToken = default)
 
     {
@@ -1253,7 +1360,8 @@ Current supported actions/commands:
 
             },
 
-            ["temperature"] = 0
+            ["temperature"] = 0,
+            ["max_tokens"] = 8
 
         };
 
@@ -1509,6 +1617,22 @@ Current supported actions/commands:
 
         return $"{trimmed}/chat/completions";
 
+    }
+
+    private static string BuildModelsUrl(string apiBaseUrl)
+    {
+        var trimmed = apiBaseUrl.Trim().TrimEnd('/');
+        if (trimmed.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed[..^"/chat/completions".Length] + "/models";
+        }
+
+        if (trimmed.EndsWith("/models", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+
+        return $"{trimmed}/models";
     }
 
 
@@ -3481,7 +3605,8 @@ Current supported actions/commands:
 2. ANSYS / APDL 说明口径：如实区分“启动本地 ANSYS APDL 启动器界面”“批处理求解器路径”“自动轻量化算例文件（StudyFile）是否已配置”三者；若本地启动器已配置，可明确告知用户能直接发“打开 APDL”或“打开仿真软件”启动，但不要把打开启动器说成已连接求解器或已完成仿真。
 3. 严禁虚报执行：在程序真正执行动作并返回结果前，绝对不要说“已打开”“已修改”“已保存”“已完成求解”。
 4. 禁止暴露内部细节：不要编造本机文件路径、草图名、特征名或内部尺寸名；不要指导用户手动扫描尺寸或手动配置内部映射；不要编造与当前桥梁检查车桁架无关的示例参数。
-5. 尊重上下文：结合多轮对话历史自然衔接，不要重复机械套话。
+5. 智能设计顾问准则：当用户询问“现在结构尺寸是多少 / 某构件目前多大”时，直接依据上方【当前项目结构截面尺寸状态】明确报出上弦杆和下弦杆的截面尺寸（外宽×外高×壁厚，注意下弦杆与下桁架为同一组构件，对外统一称“下弦杆”），不要推脱说查不到或让用户去发“读取轻量化基线”。当用户询问怎么改、如何轻量化、如何加强或评价某个候选规格时，不要用人为写死的窄范围提前限制用户，也不要在尚未运行仿真优化前直接给出“减重 XX% / 刚度提升 XX%”等未经仿真核实的量化减重结论；应从定性工程思路、几何联动（红管补偿与通道净宽）及规范关注点出发协助分析，并引导用户结合后续 ANSYS APDL 仿真校核结果来定量优化。
+6. 尊重上下文：结合当前项目长期记忆与多轮对话历史自然衔接，不要重复机械套话。
 """;
 
         if (requestOptions?.AllowApdlLauncherAction == true)
@@ -3514,7 +3639,7 @@ Current supported actions/commands:
 本轮输出模式（纯自然语言答复，IntentLabel={intentLabel}）：
 - 本轮不执行任何 SolidWorks 或外部软件动作。
 - 直接输出清晰、自然的中文答复正文即可，不要输出 JSON，不要输出 Markdown 代码块。
-- 若用户询问功能、状态或软件是否支持某能力，直接按实时状态如实回答，并顺手提示下一步可直接输入的命令（如“打开当前模型”“查询可编辑参数”“打开 APDL”“把上弦杆截面改成 80x80x6”等）。
+- 若用户询问功能、状态或软件是否支持某能力，直接按实时状态如实回答，并顺手提示下一步可直接输入的命令（如“打开当前模型”“查询可编辑参数”“打开 APDL”“把上弦杆截面改成 60x60”或“把下弦杆改成 70x70x4”等）。
 """;
         }
 

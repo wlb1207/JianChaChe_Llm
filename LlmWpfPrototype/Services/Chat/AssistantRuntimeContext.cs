@@ -25,7 +25,10 @@ public sealed record AssistantRuntimeContextSnapshot(
     string? LastModifiedParameterSummary,
     int ApdlLauncherStartCount,
     DateTime? LastApdlLauncherStartedAt,
-    IReadOnlyList<ActionAuditEntry> RecentActions)
+    IReadOnlyList<ActionAuditEntry> RecentActions,
+    string? ProjectContextBlock = null,
+    string? LiveStructureDimensionsBlock = null,
+    string? EngineeringKnowledgeGuidanceBlock = null)
 {
     public string ToPromptBlock()
     {
@@ -60,7 +63,7 @@ public sealed record AssistantRuntimeContextSnapshot(
                 : "未配置";
         var studyState = IsLightweightStudyConfigured
             ? "已配置（可发送“运行轻量化仿真”执行批处理对比）"
-            : "尚未配置算例文件（当前可先发送“读取轻量化基线”核对模型尺寸，或启动本地 APDL 界面/起草脚本，暂不可一键自动批处理求解）";
+            : "尚未配置算例文件（当前可先基于截面力学计算与规范分析方案，或启动本地 APDL 界面/起草脚本，暂不可一键自动批处理求解）";
         sb.AppendLine($"- ANSYS 批处理求解器：{solverState}；自动轻量化算例：{studyState}");
 
         if (ApdlLauncherStartCount > 0)
@@ -101,6 +104,24 @@ public sealed record AssistantRuntimeContextSnapshot(
                 var status = entry.Succeeded ? "成功" : "未完成/失败";
                 sb.AppendLine($"  * [{entry.Timestamp:HH:mm:ss}] {entry.ActionName}：{entry.Summary}（{status}）");
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(ProjectContextBlock))
+        {
+            sb.AppendLine();
+            sb.AppendLine(ProjectContextBlock.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(LiveStructureDimensionsBlock))
+        {
+            sb.AppendLine();
+            sb.AppendLine(LiveStructureDimensionsBlock.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(EngineeringKnowledgeGuidanceBlock))
+        {
+            sb.AppendLine();
+            sb.AppendLine(EngineeringKnowledgeGuidanceBlock.Trim());
         }
 
         return sb.ToString().TrimEnd();

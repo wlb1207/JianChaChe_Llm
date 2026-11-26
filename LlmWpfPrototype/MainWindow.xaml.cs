@@ -1,9 +1,15 @@
 using System.Collections.Specialized;
+using System.ComponentModel;
+using System.IO;
 using System.Windows;
-using System.Windows.Data;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
+using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Project;
 using LlmWpfPrototype.ViewModels;
 
 namespace LlmWpfPrototype;
@@ -17,6 +23,7 @@ public partial class MainWindow : Window
     private readonly object _mappingItemsSyncRoot = new();
     private bool _isChatNearBottom = true;
     private bool _isScrollRequestPending;
+    private GridLength _savedSidebarWidth = new(288);
 
     public MainWindow()
     {
@@ -45,6 +52,10 @@ public partial class MainWindow : Window
         var trussMemberCommandParser = new TrussMemberCommandParser(editableTrussMemberCatalogService);
         var commandDispatcher = new CommandDispatcher(solidWorksService, workspaceManager, editableTrussMemberCatalogService, trussMemberCommandParser, dimensionScanCatalogService, trussParameterMappingRecommendationService, trussParameterSetupStateService);
         var llmService = new LlmService(appSettings.Llm, parameterDictionaryService);
+        var projectStore = new DesignProjectStoreService(
+            Path.Combine(AppPaths.DataDirectory, "projects"),
+            appSettings.SolidWorksWorkspace);
+
         DataContext = new MainViewModel(
             llmService,
             parameterDictionaryService,
@@ -58,14 +69,183 @@ public partial class MainWindow : Window
             dimensionScanCatalogService,
             trussParameterMappingRecommendationService,
             trussMemberCommandParser,
-            appSettings.Simulation);
+            appSettings.Simulation,
+            projectStore: projectStore);
 
         _viewModel = DataContext as MainViewModel;
-        workspaceManager.ResetSessionCacheOnStartup(message => _viewModel?.AppendSystemLog(message));
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        }
 
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
         SizeChanged += MainWindow_SizeChanged;
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(MainViewModel.IsProjectSidebarVisible), StringComparison.Ordinal) ||
+            _viewModel is null)
+        {
+            return;
+        }
+
+        if (_viewModel.IsProjectSidebarVisible)
+        {
+            SidebarColumn.MinWidth = 236;
+            SidebarColumn.MaxWidth = 400;
+            SidebarColumn.Width = _savedSidebarWidth.Value >= 236 ? _savedSidebarWidth : new GridLength(288);
+            SplitterColumn.Width = new GridLength(10);
+        }
+        else
+        {
+            if (SidebarColumn.ActualWidth >= 236)
+            {
+                _savedSidebarWidth = new GridLength(SidebarColumn.ActualWidth);
+            }
+            SidebarColumn.MinWidth = 0;
+            SidebarColumn.MaxWidth = 0;
+            SidebarColumn.Width = new GridLength(0);
+            SplitterColumn.Width = new GridLength(0);
+        }
+    }
+
+    private void UserInputTextBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (_viewModel?.PrimaryActionCommand.CanExecute(null) == true)
+        {
+            _viewModel.PrimaryActionCommand.Execute(null);
+        }
+    }
+
+    private void ProjectMetaTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            _viewModel?.SaveProjectMetaCommand.Execute(null);
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            _viewModel?.CancelEditProjectMetaCommand.Execute(null);
+        }
+    }
+
+    private void ClearConversationButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || !_viewModel.ClearConversationCommand.CanExecute(null))
+        {
+            return;
+        }
+
+        var result = System.Windows.MessageBox.Show(
+            this,
+            "确定要清空当前这一条对话中的消息吗？\n\n（不会影响当前项目三维模型及其他历史对话。）",
+            "确认清空消息",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (result == MessageBoxResult.Yes)
+        {
+            _viewModel.ClearConversationCommand.Execute(null);
+        }
+    }
+
+    private void DeleteProjectMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null ||
+            sender is not System.Windows.Controls.MenuItem { Tag: DesignProjectItemViewModel projectItem })
+        {
+            return;
+        }
+
+        var result = System.Windows.MessageBox.Show(
+            this,
+            $"确定要删除项目“{projectItem.RawName}”及其全部历史对话吗？\n\n此操作不可恢复。",
+            "确认删除项目",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result == MessageBoxResult.Yes)
+        {
+            _viewModel.DeleteProjectCommand.Execute(projectItem);
+        }
+    }
+
+    private void DeleteConversationMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null ||
+            sender is not System.Windows.Controls.MenuItem { Tag: DesignConversationItemViewModel convItem })
+        {
+            return;
+        }
+
+        var result = System.Windows.MessageBox.Show(
+            this,
+            $"确定要删除对话“{convItem.Title}”吗？",
+            "确认删除对话",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result == MessageBoxResult.Yes)
+        {
+            _viewModel.DeleteConversationCommand.Execute(convItem);
+        }
+    }
+
+    private async void CopyBubbleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button ||
+            button.DataContext is not ChatMessage message ||
+            string.IsNullOrWhiteSpace(message.Text))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(message.Text);
+            button.Content = "已复制 ✓";
+            await Task.Delay(1400);
+            button.Content = "复制";
+        }
+        catch
+        {
+        }
+    }
+
+    private void ProjectMoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button)
+        {
+            return;
+        }
+
+        DependencyObject? current = button;
+        while (current is not null and not Border { ContextMenu: not null })
+        {
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        if (current is Border { ContextMenu: { } menu } cardBorder)
+        {
+            menu.PlacementTarget = cardBorder;
+            menu.IsOpen = true;
+            e.Handled = true;
+        }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -75,10 +255,16 @@ public partial class MainWindow : Window
         UpdateAdvancedDebugTabHeight();
         RequestScrollChatToBottom(force: true);
         RequestScrollLogToBottom(force: true);
+        _ = _viewModel?.ProbeLlmConnectionAsync(isStartupProbe: true);
     }
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        _viewModel?.FlushActiveSessionOnExit();
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        }
         DetachChatCollection();
     }
 
@@ -207,7 +393,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var targetHeight = Math.Max(260d, ActualHeight * 0.32d);
+        var targetHeight = Math.Max(220d, ActualHeight * 0.30d);
         AdvancedDebugTabControl.Height = targetHeight;
     }
 }

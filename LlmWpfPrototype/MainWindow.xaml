@@ -5,159 +5,1003 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:models="clr-namespace:LlmWpfPrototype.Models"
         xmlns:ui="clr-namespace:LlmWpfPrototype.Presentation"
+        xmlns:vm="clr-namespace:LlmWpfPrototype.ViewModels"
         mc:Ignorable="d"
-        Title="&#x6865;&#x6881;&#x68C0;&#x67E5;&#x8F66;&#x667A;&#x80FD;&#x8BBE;&#x8BA1;&#x52A9;&#x624B;"
+        Title="桥梁检查车智能设计助手"
         Height="920"
         Width="1440"
-        MinHeight="780"
-        MinWidth="1200"
+        MinHeight="600"
+        MinWidth="760"
         WindowStartupLocation="CenterScreen"
-        Background="#FFF5F7FA">
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+        FontFamily="Microsoft YaHei UI"
+        Background="#FFF4F6F9">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
-        <Border Grid.Row="0"
-                Padding="14,12"
-                Background="White"
-                BorderBrush="#FFD8E0EA"
+        <Style x:Key="SidebarIconButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="IconBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="IconBorder" Property="Background" Value="#FFE2E8F0" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="IconBorder" Property="Background" Value="#FFCBD5E1" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ProjectTitleButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="4,2" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="TitleBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TitleBorder" Property="Background" Value="#FFF8FAFC" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ConversationItemButtonStyle" TargetType="Button">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ItemBorder"
+                                Margin="0,1.5"
+                                Padding="9,6.5"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="7">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#FFF1F5F9" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="BubbleCopyButtonStyle" TargetType="Button" BasedOn="{StaticResource GhostButtonStyle}">
+            <Setter Property="Padding" Value="7,2" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#FF64748B" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="SidebarColumn" Width="288" MinWidth="236" MaxWidth="400" />
+            <ColumnDefinition x:Name="SplitterColumn" Width="10" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ==================== 左侧：项目管理与多次跟进会话侧边栏 ==================== -->
+        <Border Grid.Column="0"
+                Background="#FFFAF9F6"
+                BorderBrush="#FFE2E8F0"
                 BorderThickness="1"
-                CornerRadius="12">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <TextBlock FontSize="26"
-                           FontWeight="Bold"
-                           Text="&#x6865;&#x6881;&#x68C0;&#x67E5;&#x8F66;&#x667A;&#x80FD;&#x8BBE;&#x8BA1;&#x52A9;&#x624B;" />
-
-                <Border Grid.Column="1"
-                        Padding="12,8"
-                        Background="#FFF8FAFC"
-                        BorderBrush="#FFD8E0EA"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        HorizontalAlignment="Right">
-                    <TextBlock FontWeight="SemiBold"
-                               Text="{Binding GptStatusSummary}" />
-                </Border>
-            </Grid>
-        </Border>
-
-        <Border Grid.Row="1"
-                Margin="0,16,0,16"
-                Background="White"
-                BorderBrush="#FFD8E0EA"
-                BorderThickness="1"
-                CornerRadius="12">
-            <Grid>
+                CornerRadius="14"
+                Visibility="{Binding IsProjectSidebarVisible, Converter={StaticResource BoolToVis}}">
+            <Grid Margin="12">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <DockPanel Margin="16,14,16,10">
-                    <TextBlock FontSize="18"
-                               FontWeight="SemiBold"
-                               Text="&#x5BF9;&#x8BDD;&#x533A;" />
-                </DockPanel>
+                <!-- 1. 顶部：项目管理 ›   [筛选] [新建项目文件夹+] -->
+                <Grid Grid.Row="0" Margin="4,2,2,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <ScrollViewer x:Name="ChatScrollViewer"
-                              Grid.Row="1"
-                              Margin="16,0,16,16"
-                              VerticalScrollBarVisibility="Auto"
-                              ScrollChanged="ChatScrollViewer_ScrollChanged">
-                    <ItemsControl x:Name="ChatItemsControl"
-                                  ItemsSource="{Binding ChatMessages}">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="项目管理"
+                                   FontSize="14.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF475569" />
+                        <TextBlock Text=" ›"
+                                   FontSize="15.5"
+                                   Margin="3,-1,0,0"
+                                   Foreground="#FF94A3B8" />
+                    </StackPanel>
+
+                    <Button Grid.Column="1"
+                            Width="30"
+                            Height="30"
+                            Margin="0,0,4,0"
+                            Style="{StaticResource SidebarIconButtonStyle}"
+                            ToolTip="筛选或搜索设计项目"
+                            Command="{Binding ToggleProjectFilterCommand}">
+                        <Path Data="M2.5,4.5 H15.5 M5.5,9 H12.5 M8,13.5 H10"
+                              Stroke="#FF64748B"
+                              StrokeThickness="1.6"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round" />
+                    </Button>
+
+                    <Button Grid.Column="2"
+                            Width="30"
+                            Height="30"
+                            Style="{StaticResource SidebarIconButtonStyle}"
+                            ToolTip="新建设计项目（0秒创建，按需隔离三维模型副本）"
+                            Command="{Binding CreateProjectCommand}">
+                        <Canvas Width="18" Height="18">
+                            <Path Data="M1.5,4.5 C1.5,3.7 2.2,3 3,3 H6.8 L8.5,4.8 H14.8 C15.6,4.8 16.3,5.5 16.3,6.3 V9.2 M1.5,6.2 V14 C1.5,14.8 2.2,15.5 3,15.5 H9.8"
+                                  Stroke="#FF64748B"
+                                  StrokeThickness="1.5"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round" />
+                            <Path Data="M13.8,10.8 V15.8 M11.3,13.3 H16.3"
+                                  Stroke="#FF64748B"
+                                  StrokeThickness="1.6"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round" />
+                        </Canvas>
+                    </Button>
+                </Grid>
+
+                <!-- 2. 搜索筛选 / 项目重命名 / 历史版本（默认全折叠，按需展开） -->
+                <StackPanel Grid.Row="1">
+                    <Border Margin="0,0,0,10"
+                            Padding="9"
+                            Background="White"
+                            BorderBrush="#FFE2E8F0"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Visibility="{Binding IsProjectFilterExpanded, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <Grid>
+                                <TextBox x:Name="ProjectSearchBox"
+                                         Height="30"
+                                         Padding="8,4"
+                                         FontSize="12.5"
+                                         Text="{Binding ProjectSearchKeyword, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Margin="10,0,8,0"
+                                           VerticalAlignment="Center"
+                                           FontSize="12"
+                                           Foreground="#FF94A3B8"
+                                           IsHitTestVisible="False"
+                                           Text="搜索项目名、规格或对话...">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text.IsEmpty, ElementName=ProjectSearchBox}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="2,8,0,0">
+                                <RadioButton Content="进行中"
+                                             FontSize="12"
+                                             Margin="0,0,12,0"
+                                             IsChecked="{Binding IsFilterActive, Mode=OneWay}"
+                                             Command="{Binding SetProjectFilterModeCommand}"
+                                             CommandParameter="Active" />
+                                <RadioButton Content="全部"
+                                             FontSize="12"
+                                             Margin="0,0,12,0"
+                                             IsChecked="{Binding IsFilterAll, Mode=OneWay}"
+                                             Command="{Binding SetProjectFilterModeCommand}"
+                                             CommandParameter="All" />
+                                <RadioButton Content="已归档"
+                                             FontSize="12"
+                                             IsChecked="{Binding IsFilterArchived, Mode=OneWay}"
+                                             Command="{Binding SetProjectFilterModeCommand}"
+                                             CommandParameter="Archived" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Margin="0,0,0,10"
+                            Padding="10"
+                            Background="White"
+                            BorderBrush="#FF7DD3FC"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Visibility="{Binding IsEditingProjectMeta, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="#FF0369A1" Text="编辑项目名称与设计目标" />
+                            <TextBox Margin="0,7,0,0"
+                                     Height="30"
+                                     Padding="8,4"
+                                     FontSize="12.5"
+                                     Text="{Binding EditingProjectName, UpdateSourceTrigger=PropertyChanged}"
+                                     KeyDown="ProjectMetaTextBox_KeyDown"
+                                     ToolTip="项目名称（按回车保存，Esc 取消）" />
+                            <TextBox Margin="0,7,0,0"
+                                     MinHeight="48"
+                                     MaxHeight="80"
+                                     Padding="8,6"
+                                     FontSize="12"
+                                     AcceptsReturn="True"
+                                     VerticalContentAlignment="Top"
+                                     TextWrapping="Wrap"
+                                     Text="{Binding EditingProjectGoal, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="项目长期设计目标与约束备注" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                <Button Height="28" Padding="12,0" FontSize="12" Style="{StaticResource PrimaryButtonStyle}" Content="保存" Command="{Binding SaveProjectMetaCommand}" />
+                                <Button Height="28" Padding="10,0" Margin="6,0,0,0" FontSize="12" Content="取消" Command="{Binding CancelEditProjectMetaCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Margin="0,0,0,10"
+                            Padding="10"
+                            Background="White"
+                            BorderBrush="#FFE2E8F0"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Visibility="{Binding IsVersionPanelExpanded, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,7">
+                                <Button DockPanel.Dock="Right" Padding="7,2" FontSize="11.5" Style="{StaticResource GhostButtonStyle}" Content="收起"
+                                        Command="{Binding ToggleVersionPanelCommand}" />
+                                <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="#FF334155" VerticalAlignment="Center" Text="历史版本记录" />
+                            </DockPanel>
+                            <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding ActiveVersionHistory}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:DesignVersionCheckpoint}">
+                                            <DockPanel Margin="0,0,0,5">
+                                                <Button DockPanel.Dock="Right" Padding="8,2" FontSize="11" Content="回退"
+                                                        Command="{Binding DataContext.RollbackToVersionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}" />
+                                                <TextBlock FontSize="11.5" Foreground="#FF475569" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding SpecsOverviewText}">
+                                                    <Run FontWeight="Bold" Foreground="#FF0284C7" Text="{Binding VersionTag, Mode=OneWay}" />
+                                                    <Run Text="{Binding Summary, StringFormat=' {0}', Mode=OneWay}" />
+                                                </TextBlock>
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- 3. 项目与多次对话列表（支持空项目状态，彻底移除底部常驻 SW 卡片） -->
+                <Grid Grid.Row="2">
+                    <ScrollViewer Focusable="False"
+                                  FocusVisualStyle="{x:Null}"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding FilteredProjects}">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="{x:Type models:ChatMessage}">
-                                <Border x:Name="Bubble"
-                                        Margin="0,0,0,12"
-                                        Padding="14,10"
-                                        Background="#FFF8FAFC"
-                                        BorderBrush="#FFD8E0EA"
+                            <DataTemplate DataType="{x:Type vm:DesignProjectItemViewModel}">
+                                <Border x:Name="ProjectCard"
+                                        Margin="0,0,0,9"
+                                        Padding="9,9"
+                                        Background="White"
+                                        BorderBrush="#FFE2E8F0"
                                         BorderThickness="1"
-                                        CornerRadius="14"
-                                        HorizontalAlignment="Left"
-                                        MaxWidth="760">
+                                        CornerRadius="11"
+                                        Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
+                                    <Border.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="编辑项目名称与设计目标"
+                                                      Command="{Binding PlacementTarget.Tag.BeginEditProjectMetaCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="查看历史版本 / 回退"
+                                                      Command="{Binding PlacementTarget.Tag.ToggleVersionPanelCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="打开本项目三维模型"
+                                                      Command="{Binding PlacementTarget.Tag.OpenProjectModelCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="同步 SolidWorks 实测尺寸"
+                                                      Command="{Binding PlacementTarget.Tag.SyncLiveDimensionsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="基于此项目派生新方案 (Fork)"
+                                                      Command="{Binding PlacementTarget.Tag.ForkProjectCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="{Binding PinActionText}"
+                                                      Command="{Binding PlacementTarget.Tag.TogglePinProjectCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="导出项目设计及实验报告 (.md)"
+                                                      Command="{Binding PlacementTarget.Tag.ExportProjectReportCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <Separator />
+                                            <MenuItem Header="{Binding ArchiveActionText}"
+                                                      Command="{Binding PlacementTarget.Tag.ToggleArchiveProjectCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="删除项目"
+                                                      Foreground="#FFDC2626"
+                                                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      Click="DeleteProjectMenuItem_Click" />
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
+
                                     <StackPanel>
-                                        <DockPanel LastChildFill="False">
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Foreground="#FF334155"
-                                                       Text="{Binding RoleDisplay}" />
-                                            <TextBlock Margin="10,0,0,0"
-                                                       Foreground="#FF94A3B8"
-                                                       Text="{Binding TimeDisplay}" />
-                                        </DockPanel>
-                                        <TextBox x:Name="PlainReply" Margin="0,8,0,0"
-                                                 Background="Transparent"
-                                                 BorderThickness="0"
-                                                 IsReadOnly="True"
-                                                 Foreground="#FF0F172A"
-                                                 TextWrapping="Wrap"
-                                                 Text="{Binding Text}" />
-                                        <ContentControl x:Name="RagReply" Margin="0,8,0,0"
-                                                        Content="{Binding}" Visibility="Collapsed">
-                                            <ContentControl.ContentTemplate>
-                                                <DataTemplate>
-                                                    <ui:RagReplyView />
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- 折叠/展开小箭头 -->
+                                            <Button Grid.Column="0"
+                                                    Width="22"
+                                                    Height="24"
+                                                    Margin="0,1,2,0"
+                                                    VerticalAlignment="Top"
+                                                    Style="{StaticResource SidebarIconButtonStyle}"
+                                                    ToolTip="折叠或展开此项目的对话列表"
+                                                    Command="{Binding DataContext.ToggleProjectExpandedCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}">
+                                                <TextBlock Text="{Binding ExpandChevronText}"
+                                                           FontSize="11.5"
+                                                           Foreground="#FF64748B" />
+                                            </Button>
+
+                                            <!-- 项目名称与版本摘要 -->
+                                            <Button Grid.Column="1"
+                                                    Style="{StaticResource ProjectTitleButtonStyle}"
+                                                    Command="{Binding DataContext.SelectProjectCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               FontSize="13.5"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#FF0F172A"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding VersionBadgeText}"
+                                                               Margin="0,2.5,0,0"
+                                                               FontSize="11.5"
+                                                               Foreground="#FF0284C7"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Button>
+
+                                            <!-- 新建此项目对话（简洁 + 图标） -->
+                                            <Button Grid.Column="2"
+                                                    Width="24"
+                                                    Height="24"
+                                                    Margin="2,0,2,0"
+                                                    VerticalAlignment="Top"
+                                                    Style="{StaticResource SidebarIconButtonStyle}"
+                                                    ToolTip="在此项目下新建一次跟进对话"
+                                                    Command="{Binding DataContext.CreateConversationInProjectCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}">
+                                                <Path Data="M9,4 V14 M4,9 H14"
+                                                      Width="14"
+                                                      Height="14"
+                                                      Stretch="Uniform"
+                                                      Stroke="#FF64748B"
+                                                      StrokeThickness="1.7"
+                                                      StrokeStartLineCap="Round"
+                                                      StrokeEndLineCap="Round" />
+                                            </Button>
+
+                                            <!-- 更多菜单 -->
+                                            <Button Grid.Column="3"
+                                                    Width="24"
+                                                    Height="24"
+                                                    VerticalAlignment="Top"
+                                                    Style="{StaticResource SidebarIconButtonStyle}"
+                                                    ToolTip="项目操作菜单（编辑目标 / 版本回退 / 派生方案 / 导出报告）"
+                                                    Click="ProjectMoreButton_Click">
+                                                <TextBlock Text="⋯" FontWeight="Bold" Foreground="#FF64748B" Margin="0,-3,0,0" />
+                                            </Button>
+                                        </Grid>
+
+                                        <!-- 项目内多次对话列表（支持单个项目折叠） -->
+                                        <ItemsControl Margin="18,6,0,0"
+                                                      ItemsSource="{Binding Conversations}"
+                                                      Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type vm:DesignConversationItemViewModel}">
+                                                    <Button x:Name="ConvItemButton"
+                                                            Style="{StaticResource ConversationItemButtonStyle}"
+                                                            Command="{Binding DataContext.SelectConversationCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}">
+                                                        <Button.ContextMenu>
+                                                            <ContextMenu>
+                                                                <MenuItem Header="删除此条对话"
+                                                                          Foreground="#FFDC2626"
+                                                                          Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                                          Click="DeleteConversationMenuItem_Click" />
+                                                            </ContextMenu>
+                                                        </Button.ContextMenu>
+                                                        <DockPanel>
+                                                            <TextBlock DockPanel.Dock="Right"
+                                                                       Margin="6,0,0,0"
+                                                                       FontSize="11"
+                                                                       VerticalAlignment="Center"
+                                                                       Foreground="#FF94A3B8"
+                                                                       Text="{Binding UpdatedTimeShort}" />
+                                                            <TextBlock x:Name="ConvTitle"
+                                                                       FontSize="12.5"
+                                                                       Foreground="#FF475569"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Text="{Binding Title}" />
+                                                        </DockPanel>
+                                                    </Button>
+                                                    <DataTemplate.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                            <Setter TargetName="ConvItemButton" Property="Background" Value="#FFF1F5F9" />
+                                                            <Setter TargetName="ConvTitle" Property="Foreground" Value="#FF0369A1" />
+                                                            <Setter TargetName="ConvTitle" Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </DataTemplate.Triggers>
                                                 </DataTemplate>
-                                            </ContentControl.ContentTemplate>
-                                        </ContentControl>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
                                     </StackPanel>
                                 </Border>
                                 <DataTemplate.Triggers>
-                                    <DataTrigger Binding="{Binding IsLocalKnowledgeReply}" Value="True">
-                                        <Setter TargetName="PlainReply" Property="Visibility" Value="Collapsed" />
-                                        <Setter TargetName="RagReply" Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding IsUser}" Value="True">
-                                        <Setter TargetName="Bubble" Property="HorizontalAlignment" Value="Right" />
-                                        <Setter TargetName="Bubble" Property="Background" Value="#FFE0F2FE" />
-                                        <Setter TargetName="Bubble" Property="BorderBrush" Value="#FF7DD3FC" />
+                                    <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                        <Setter TargetName="ProjectCard" Property="BorderBrush" Value="#FF7DD3FC" />
+                                        <Setter TargetName="ProjectCard" Property="BorderThickness" Value="1.5" />
                                     </DataTrigger>
                                 </DataTemplate.Triggers>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                </ScrollViewer>
+                    </ScrollViewer>
+
+                    <!-- 无项目或搜索无结果时的简洁引导空态 -->
+                    <StackPanel VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Margin="16,0"
+                                Visibility="{Binding ShowEmptyProjectsState, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding EmptyProjectsHintText}"
+                                   FontSize="12.5"
+                                   Foreground="#FF94A3B8"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   LineHeight="20" />
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Border>
 
-        <Border Grid.Row="2"
-                Padding="14"
-                Background="White"
-                BorderBrush="#FFD8E0EA"
-                BorderThickness="1"
-                CornerRadius="12">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+        <!-- 可拖拽侧边栏宽度分隔条 -->
+        <GridSplitter Grid.Column="1"
+                      Width="6"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="Transparent"
+                      ShowsPreview="True"
+                      Visibility="{Binding IsProjectSidebarVisible, Converter={StaticResource BoolToVis}}" />
 
-                <StackPanel Grid.Column="0">
-                    <Grid MinHeight="88">
+        <!-- ==================== 右侧：主设计工作区 ==================== -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" /> <!-- 精简标题栏 -->
+                <RowDefinition Height="*" />    <!-- 对话区 -->
+                <RowDefinition Height="Auto" /> <!-- 处理中提示 / 待确认快捷条 -->
+                <RowDefinition Height="Auto" /> <!-- 一体式输入区 -->
+                <RowDefinition Height="Auto" /> <!-- 高级调试 -->
+            </Grid.RowDefinitions>
+
+            <!-- Row 0：精简主标题栏 -->
+            <Border Grid.Row="0"
+                    Padding="12,9"
+                    Background="White"
+                    BorderBrush="#FFE2E8F0"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0"
+                            Width="32"
+                            Height="32"
+                            Margin="0,0,10,0"
+                            Style="{StaticResource SidebarIconButtonStyle}"
+                            ToolTip="{Binding ToggleSidebarTooltip}"
+                            Command="{Binding ToggleSidebarCommand}">
+                        <Canvas Width="18" Height="18">
+                            <Rectangle Canvas.Left="1.5" Canvas.Top="2.5" Width="15" Height="13" RadiusX="2.5" RadiusY="2.5"
+                                       Stroke="#FF334155" StrokeThickness="1.5" />
+                            <Line X1="6.8" Y1="2.5" X2="6.8" Y2="15.5" Stroke="#FF334155" StrokeThickness="1.5" />
+                        </Canvas>
+                    </Button>
+
+                    <TextBlock Grid.Column="1"
+                               FontSize="17.5"
+                               FontWeight="Bold"
+                               Foreground="#FF0F172A"
+                               VerticalAlignment="Center"
+                               Text="桥梁检查车智能设计助手" />
+
+                    <!-- AI 连通状态胶囊（四态颜色 + 连接中呼吸过渡 + 点击一键重连） -->
+                    <Button Grid.Column="2"
+                            Cursor="Hand"
+                            FocusVisualStyle="{x:Null}"
+                            VerticalAlignment="Center"
+                            Command="{Binding ReconnectLlmCommand}"
+                            ToolTip="{Binding LlmStatusTooltip}">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="StatusPillBorder"
+                                        Padding="11,5.5"
+                                        Background="#FFF8FAFC"
+                                        BorderBrush="#FFE2E8F0"
+                                        BorderThickness="1"
+                                        CornerRadius="14">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse x:Name="LlmStatusDot"
+                                                 Width="8"
+                                                 Height="8"
+                                                 Margin="0,0,7,0"
+                                                 VerticalAlignment="Center"
+                                                 Fill="#FF94A3B8" />
+                                        <TextBlock x:Name="LlmStatusText"
+                                                   FontSize="12.5"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FF334155"
+                                                   Text="{Binding GptStatusSummary}" />
+                                    </StackPanel>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsLlmStatusConnecting}" Value="True">
+                                        <Setter TargetName="StatusPillBorder" Property="Background" Value="#FFFFFBEB" />
+                                        <Setter TargetName="StatusPillBorder" Property="BorderBrush" Value="#FFFDE68A" />
+                                        <Setter TargetName="LlmStatusDot" Property="Fill" Value="#FFF59E0B" />
+                                        <Setter TargetName="LlmStatusText" Property="Foreground" Value="#FF92400E" />
+                                        <DataTrigger.EnterActions>
+                                            <BeginStoryboard x:Name="ConnectingPulseStoryboard">
+                                                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                    <DoubleAnimation Storyboard.TargetName="LlmStatusDot"
+                                                                     Storyboard.TargetProperty="Opacity"
+                                                                     From="1.0"
+                                                                     To="0.25"
+                                                                     Duration="0:0:0.7" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </DataTrigger.EnterActions>
+                                        <DataTrigger.ExitActions>
+                                            <StopStoryboard BeginStoryboardName="ConnectingPulseStoryboard" />
+                                        </DataTrigger.ExitActions>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsLlmStatusOnline}" Value="True">
+                                        <Setter TargetName="StatusPillBorder" Property="Background" Value="#FFF0FDF4" />
+                                        <Setter TargetName="StatusPillBorder" Property="BorderBrush" Value="#FFBBF7D0" />
+                                        <Setter TargetName="LlmStatusDot" Property="Fill" Value="#FF16A34A" />
+                                        <Setter TargetName="LlmStatusDot" Property="Opacity" Value="1.0" />
+                                        <Setter TargetName="LlmStatusText" Property="Foreground" Value="#FF166534" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsLlmStatusError}" Value="True">
+                                        <Setter TargetName="StatusPillBorder" Property="Background" Value="#FFFEF2F2" />
+                                        <Setter TargetName="StatusPillBorder" Property="BorderBrush" Value="#FFFECACA" />
+                                        <Setter TargetName="LlmStatusDot" Property="Fill" Value="#FFDC2626" />
+                                        <Setter TargetName="LlmStatusDot" Property="Opacity" Value="1.0" />
+                                        <Setter TargetName="LlmStatusText" Property="Foreground" Value="#FF991B1B" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsLlmStatusMock}" Value="True">
+                                        <Setter TargetName="StatusPillBorder" Property="Background" Value="#FFF8FAFC" />
+                                        <Setter TargetName="StatusPillBorder" Property="BorderBrush" Value="#FFE2E8F0" />
+                                        <Setter TargetName="LlmStatusDot" Property="Fill" Value="#FF64748B" />
+                                        <Setter TargetName="LlmStatusText" Property="Foreground" Value="#FF475569" />
+                                    </DataTrigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="StatusPillBorder" Property="Opacity" Value="0.88" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </Grid>
+            </Border>
+
+            <!-- Row 1：对话区（有项目时显示对话流；0 项目时显示方案 1A 居中引导空态） -->
+            <Grid Grid.Row="1" Margin="0,10,0,10">
+                <!-- 方案 1A：零项目空态工作台（无假气泡、无输入框） -->
+                <Border Background="White"
+                        BorderBrush="#FFE2E8F0"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Visibility="{Binding HasZeroProjects, Converter={StaticResource BoolToVis}}">
+                    <StackPanel VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                MaxWidth="460"
+                                Margin="24">
+                        <Border Width="54"
+                                Height="54"
+                                Background="#FFF0F9FF"
+                                BorderBrush="#FFBAE6FD"
+                                BorderThickness="1"
+                                CornerRadius="16"
+                                HorizontalAlignment="Center"
+                                Margin="0,0,0,18">
+                            <Canvas Width="26" Height="26">
+                                <Path Data="M2.5,7 C2.5,5.6 3.6,4.5 5,4.5 H10.2 L12.5,7 H21 C22.4,7 23.5,8.1 23.5,9.5 V19 C23.5,20.4 22.4,21.5 21,21.5 H5 C3.6,21.5 2.5,20.4 2.5,19 Z"
+                                      Stroke="#FF0284C7"
+                                      StrokeThickness="1.8"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round" />
+                                <Path Data="M13,11 V17 M10,14 H16"
+                                      Stroke="#FF0284C7"
+                                      StrokeThickness="1.8"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round" />
+                            </Canvas>
+                        </Border>
+
+                        <TextBlock Text="开始一个新的结构设计项目"
+                                   FontSize="19"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF0F172A"
+                                   HorizontalAlignment="Center" />
+
+                        <TextBlock Margin="0,10,0,22"
+                                   Text="当前暂无活动项目。新建项目后即可开展多轮持续对话、参数化改型、截面力学评估与仿真协同。"
+                                   FontSize="13.5"
+                                   Foreground="#FF64748B"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   LineHeight="22" />
+
+                        <Button Height="40"
+                                Padding="24,0"
+                                HorizontalAlignment="Center"
+                                Style="{StaticResource PrimaryButtonStyle}"
+                                Content="+ 新建设计项目"
+                                Command="{Binding CreateProjectCommand}" />
+
+                        <TextBlock Margin="0,20,0,0"
+                                   Text="多轮持续设计  ·  SolidWorks 联动  ·  ANSYS APDL 协同  ·  规范检索"
+                                   FontSize="11.5"
+                                   Foreground="#FF94A3B8"
+                                   HorizontalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 有活动项目时：正常对话区 -->
+                <Border Background="White"
+                        BorderBrush="#FFE2E8F0"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Visibility="{Binding HasActiveProject, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Padding="16,10"
+                            BorderBrush="#FFF1F5F9"
+                            BorderThickness="0,0,0,1">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right"
+                                    Height="29"
+                                    Padding="12,0"
+                                    FontSize="12"
+                                    Content="+ 新建跟进对话"
+                                    ToolTip="在当前项目下开启新对话，保留旧对话并共享当前模型快照"
+                                    Command="{Binding CreateNewConversationCommand}" />
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock FontSize="14.5"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF334155"
+                                           VerticalAlignment="Center"
+                                           Text="设计对话" />
+                                <TextBlock Margin="10,0,0,0"
+                                           FontSize="12"
+                                           Foreground="#FF94A3B8"
+                                           VerticalAlignment="Center"
+                                           Text="{Binding ActiveProjectDisplayName}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsProjectSidebarVisible}" Value="False">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <ScrollViewer x:Name="ChatScrollViewer"
+                                  Grid.Row="1"
+                                  Focusable="False"
+                                  FocusVisualStyle="{x:Null}"
+                                  Padding="18,14,18,14"
+                                  VerticalScrollBarVisibility="Auto"
+                                  ScrollChanged="ChatScrollViewer_ScrollChanged">
+                        <StackPanel>
+                            <ItemsControl x:Name="ChatItemsControl"
+                                          ItemsSource="{Binding ChatMessages}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:ChatMessage}">
+                                        <Border x:Name="Bubble"
+                                                Margin="0,0,56,14"
+                                                Padding="15,12"
+                                                Background="#FFF8FAFC"
+                                                BorderBrush="#FFE2E8F0"
+                                                BorderThickness="1"
+                                                CornerRadius="14,14,14,4"
+                                                HorizontalAlignment="Left">
+                                            <StackPanel>
+                                                <DockPanel Margin="0,0,0,6">
+                                                    <Button x:Name="CopyBubbleButton"
+                                                            DockPanel.Dock="Right"
+                                                            Style="{StaticResource BubbleCopyButtonStyle}"
+                                                            Content="复制"
+                                                            Opacity="0"
+                                                            ToolTip="复制此条回复内容"
+                                                            Click="CopyBubbleButton_Click" />
+
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Border x:Name="RoleAvatar"
+                                                                Width="20"
+                                                                Height="20"
+                                                                Margin="0,0,7,0"
+                                                                Background="#FFE0F2FE"
+                                                                CornerRadius="10">
+                                                            <TextBlock x:Name="RoleAvatarText"
+                                                                       Text="AI"
+                                                                       FontSize="9.5"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="#FF0284C7"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center" />
+                                                        </Border>
+                                                        <TextBlock x:Name="RoleHeaderText"
+                                                                   FontSize="12.5"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#FF334155"
+                                                                   VerticalAlignment="Center"
+                                                                   Text="{Binding RoleDisplay}" />
+                                                        <TextBlock Margin="8,0,0,0"
+                                                                   FontSize="11.5"
+                                                                   Foreground="#FF94A3B8"
+                                                                   VerticalAlignment="Center"
+                                                                   Text="{Binding TimeDisplay}" />
+                                                    </StackPanel>
+                                                </DockPanel>
+
+                                                <!-- 普通 AI 回复：接入格式化富文本排版（支持加粗/列表/代码/公式） -->
+                                                <ui:RagFormattedText x:Name="FormattedAiReply"
+                                                                     Markup="{Binding Text}"
+                                                                     HideSourceReferences="False" />
+
+                                                <!-- 用户消息：保持原样清晰只读文本 -->
+                                                <TextBox x:Name="UserPlainText"
+                                                         Style="{StaticResource BorderlessTextBoxStyle}"
+                                                         Visibility="Collapsed"
+                                                         IsReadOnly="True"
+                                                         FontSize="14"
+                                                         Foreground="#FF0F172A"
+                                                         TextWrapping="Wrap"
+                                                         Text="{Binding Text}" />
+
+                                                <!-- RAG 规范问答回复：完整保留引用与可展开资料片段 -->
+                                                <ContentControl x:Name="RagReply"
+                                                                Content="{Binding}"
+                                                                Visibility="Collapsed">
+                                                    <ContentControl.ContentTemplate>
+                                                        <DataTemplate>
+                                                            <ui:RagReplyView />
+                                                        </DataTemplate>
+                                                    </ContentControl.ContentTemplate>
+                                                </ContentControl>
+                                            </StackPanel>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding RoleDisplay}" Value="AI">
+                                                <Setter TargetName="RoleHeaderText" Property="Text" Value="智能设计助手" />
+                                            </DataTrigger>
+                                            <Trigger SourceName="Bubble" Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="CopyBubbleButton" Property="Opacity" Value="1" />
+                                            </Trigger>
+                                            <DataTrigger Binding="{Binding IsLocalKnowledgeReply}" Value="True">
+                                                <Setter TargetName="FormattedAiReply" Property="Visibility" Value="Collapsed" />
+                                                <Setter TargetName="UserPlainText" Property="Visibility" Value="Collapsed" />
+                                                <Setter TargetName="RagReply" Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsUser}" Value="True">
+                                                <Setter TargetName="Bubble" Property="HorizontalAlignment" Value="Right" />
+                                                <Setter TargetName="Bubble" Property="Margin" Value="56,0,0,14" />
+                                                <Setter TargetName="Bubble" Property="Background" Value="#FFE0F2FE" />
+                                                <Setter TargetName="Bubble" Property="BorderBrush" Value="#FFBAE6FD" />
+                                                <Setter TargetName="Bubble" Property="CornerRadius" Value="14,14,4,14" />
+                                                <Setter TargetName="RoleAvatar" Property="Background" Value="#FF0284C7" />
+                                                <Setter TargetName="RoleAvatarText" Property="Text" Value="您" />
+                                                <Setter TargetName="RoleAvatarText" Property="Foreground" Value="White" />
+                                                <Setter TargetName="RoleHeaderText" Property="Visibility" Value="Collapsed" />
+                                                <Setter TargetName="FormattedAiReply" Property="Visibility" Value="Collapsed" />
+                                                <Setter TargetName="UserPlainText" Property="Visibility" Value="Visible" />
+                                                <Setter TargetName="CopyBubbleButton" Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- 新对话欢迎状态：常用快捷提问胶囊（发送首条消息后自动隐藏） -->
+                            <StackPanel Margin="4,4,0,4"
+                                        Visibility="{Binding ShowWelcomeQuickPrompts, Converter={StaticResource BoolToVis}}">
+                                <TextBlock FontSize="12"
+                                           Foreground="#FF94A3B8"
+                                           Margin="2,0,0,8"
+                                           Text="快捷开始：" />
+                                <ItemsControl ItemsSource="{Binding QuickPrompts}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource QuickPromptPillStyle}"
+                                                    Content="{Binding}"
+                                                    Command="{Binding DataContext.SendQuickPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+                </Border>
+            </Grid>
+
+            <!-- Row 2：瞬态状态区（仅在处理中或有待确认改模时短暂出现，平时 0 高度） -->
+            <StackPanel Grid.Row="2" Visibility="{Binding HasActiveProject, Converter={StaticResource BoolToVis}}">
+                <!-- A. AI 思考中 / CAD 处理中轻量提示条 -->
+                <Border Margin="0,0,0,8"
+                        Padding="12,8"
+                        Background="#FFF0F9FF"
+                        BorderBrush="#FFBAE6FD"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Visibility="{Binding IsAssistantBusy, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right"
+                                    Style="{StaticResource DangerSoftButtonStyle}"
+                                    Content="停止等待"
+                                    Command="{Binding CancelChatCommand}"
+                                    Visibility="{Binding IsChatBusy, Converter={StaticResource BoolToVis}}" />
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Ellipse Width="8" Height="8" Fill="#FF0284C7" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                <TextBlock FontSize="12.5"
+                                           Foreground="#FF0369A1"
+                                           FontWeight="Medium"
+                                           TextTrimming="CharacterEllipsis"
+                                           Text="{Binding BusyBannerText}" />
+                            </StackPanel>
+                        </DockPanel>
+                        <ProgressBar Margin="0,7,0,0"
+                                     Height="3"
+                                     IsIndeterminate="True"
+                                     BorderThickness="0"
+                                     Background="#FFE0F2FE"
+                                     Foreground="#FF0284C7" />
+                    </StackPanel>
+                </Border>
+
+                <!-- B. 待确认修改快捷条（确认或取消后立刻消失，平时不占地） -->
+                <Border Margin="0,0,0,8"
+                        Padding="13,9"
+                        Background="#FFFFFBEB"
+                        BorderBrush="#FFFCD34D"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Visibility="{Binding HasPendingCadConfirmation, Converter={StaticResource BoolToVis}}">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
+                            <Button Style="{StaticResource SuccessButtonStyle}"
+                                    Content="✓ 确认执行改模"
+                                    Command="{Binding ConfirmBusinessCommand}" />
+                            <Button Margin="8,0,0,0"
+                                    Style="{StaticResource DangerSoftButtonStyle}"
+                                    Content="✕ 取消"
+                                    Command="{Binding CancelPendingBusinessCommand}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border Padding="6,2" Margin="0,0,8,0" Background="#FFFEF3C7" CornerRadius="5">
+                                <TextBlock FontSize="11.5" FontWeight="SemiBold" Foreground="#FFB45309" Text="待确认修改" />
+                            </Border>
+                            <TextBlock FontSize="12.5"
+                                       Foreground="#FF78350F"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       Text="{Binding PendingCadConfirmationSummary}" />
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Row 3：一体式现代圆角输入卡片（仅在存在活动项目时展示） -->
+            <Border Grid.Row="3"
+                    Padding="12,10,12,10"
+                    Background="White"
+                    BorderThickness="1.2"
+                    CornerRadius="14"
+                    Visibility="{Binding HasActiveProject, Converter={StaticResource BoolToVis}}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="BorderBrush" Value="#FFD8E2EC" />
+                        <Style.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter Property="BorderBrush" Value="#FF38BDF8" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 多行输入文本框（Enter 发送，Shift+Enter 换行） -->
+                    <Grid Grid.Row="0" MinHeight="64" MaxHeight="150">
                         <TextBox x:Name="UserInputTextBox"
+                                 Style="{StaticResource BorderlessTextBoxStyle}"
                                  Text="{Binding UserInput, UpdateSourceTrigger=PropertyChanged}"
-                                 AcceptsReturn="False"
+                                 AcceptsReturn="True"
                                  TextWrapping="Wrap"
                                  VerticalScrollBarVisibility="Auto"
-                                 MinHeight="88"
-                                 Padding="12"
+                                 MinHeight="64"
+                                 Padding="6,4"
                                  FontSize="14"
-                                 Background="Transparent" />
-                        <TextBlock Margin="16,12,40,12"
+                                 PreviewKeyDown="UserInputTextBox_PreviewKeyDown" />
+                        <TextBlock Margin="8,5,16,4"
                                    Foreground="#FF94A3B8"
-                                   FontSize="14"
+                                   FontSize="13.5"
                                    IsHitTestVisible="False"
-                                   Text="&#x5728;&#x8FD9;&#x91CC;&#x8F93;&#x5165;&#x6D88;&#x606F;&#xFF0C;&#x6309; Enter &#x53D1;&#x9001;"
+                                   Text="输入结构咨询、当前尺寸查询、轻量化目标或修改指令（如：现在尺寸是多少？ / 把上弦杆改成 60x60 / 壁厚改成 4）"
                                    TextWrapping="Wrap">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
@@ -175,166 +1019,176 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </Grid>
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                        <Button Width="110"
-                                Height="36"
-                                Content="&#x6E05;&#x7A7A;&#x5BF9;&#x8BDD;"
-                                Command="{Binding ClearConversationCommand}" />
-                        <Button Width="110"
-                                Height="36"
-                                Margin="10,0,0,0"
-                                Content="&#x91CD;&#x65B0;&#x89E3;&#x6790;"
-                                Command="{Binding ReparseCommand}" />
-                        <Button Width="120"
-                                Height="36"
-                                Margin="10,0,0,0"
-                                Content="{Binding AdvancedDebugButtonText}"
-                                Command="{Binding ToggleAdvancedDebugCommand}" />
-                    </StackPanel>
-                </StackPanel>
 
-                <Button Grid.Column="1"
-                        Width="220"
-                        Height="52"
-                        Margin="16,0,0,0"
-                        VerticalAlignment="Bottom"
-                        FontWeight="SemiBold"
-                        IsDefault="True"
-                        Content="{Binding PrimaryActionText}"
-                        Command="{Binding PrimaryActionCommand}" />
-            </Grid>
-        </Border>
+                    <!-- 底部精简工具栏 + 发送主按钮 -->
+                    <DockPanel Grid.Row="1" Margin="0,8,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Margin="0,0,12,0"
+                                       FontSize="11.5"
+                                       Foreground="#FF94A3B8"
+                                       VerticalAlignment="Center"
+                                       Text="Enter 发送 · Shift+Enter 换行" />
+                            <Button MinWidth="92"
+                                    Height="36"
+                                    Style="{StaticResource PrimaryButtonStyle}"
+                                    Content="{Binding PrimaryActionText}"
+                                    Command="{Binding PrimaryActionCommand}" />
+                        </StackPanel>
 
-        <Expander Grid.Row="3"
-                  Margin="0,16,0,0"
-                  IsExpanded="{Binding IsAdvancedDebugExpanded, Mode=TwoWay}"
-                  Header="&#x9AD8;&#x7EA7;&#x8C03;&#x8BD5;">
-            <Border Padding="12"
-                    Background="White"
-                    BorderBrush="#FFD8E0EA"
-                    BorderThickness="1"
-                    CornerRadius="0,0,12,12">
-                <TabControl x:Name="AdvancedDebugTabControl"
-                            MinHeight="260">
-                    <TabItem Header="JSON &#x7ED3;&#x679C;">
-                        <TextBox Text="{Binding JsonOutput, Mode=OneWay}"
-                                 IsReadOnly="True"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 HorizontalScrollBarVisibility="Auto"
-                                 FontFamily="Consolas"
-                                 FontSize="12"
-                                 Padding="12" />
-                    </TabItem>
-                    <TabItem Header="&#x53C2;&#x6570;&#x8868;">
-                        <DataGrid ItemsSource="{Binding Parameters}"
-                                  AutoGenerateColumns="False"
-                                  IsReadOnly="True"
-                                  CanUserAddRows="False"
-                                  HeadersVisibility="Column"
-                                  GridLinesVisibility="Horizontal">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="&#x53C2;&#x6570;&#x540D;" Binding="{Binding Name}" Width="2*" />
-                                <DataGridTextColumn Header="&#x663E;&#x793A;&#x540D;" Binding="{Binding DisplayName}" Width="2*" />
-                                <DataGridTextColumn Header="&#x6570;&#x503C;" Binding="{Binding Value}" Width="*" />
-                                <DataGridTextColumn Header="&#x5355;&#x4F4D;" Binding="{Binding Unit}" Width="*" />
-                                <DataGridTextColumn Header="&#x6620;&#x5C04;&#x72B6;&#x6001;" Binding="{Binding MappingStatus}" Width="1.4*" />
-                                <DataGridTextColumn Header="&#x8BF4;&#x660E;" Binding="{Binding Description}" Width="3*" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                    </TabItem>
-                    <TabItem Header="APDL &#x9884;&#x89C8;">
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Top"
-                                        Orientation="Horizontal"
-                                        Margin="12">
-                                <Button Width="160"
-                                        Height="34"
-                                        Content="&#x751F;&#x6210; APDL &#x8C03;&#x8BD5;&#x6587;&#x4EF6;"
-                                        Command="{Binding GenerateApdlCommand}" />
-                                <Button Width="140"
-                                        Height="34"
-                                        Margin="10,0,0,0"
-                                        Content="&#x6253;&#x5F00;&#x8F93;&#x51FA;&#x6587;&#x4EF6;"
-                                        Command="{Binding OpenApdlOutputFileCommand}" />
-                            </StackPanel>
-                            <TextBlock DockPanel.Dock="Top"
-                                       Margin="12,0,12,8"
-                                       Text="{Binding ApdlOutputPath}" />
-                            <TextBox Margin="12"
-                                     Text="{Binding ApdlPreviewContent, Mode=OneWay}"
-                                     IsReadOnly="True"
-                                     AcceptsReturn="True"
-                                     TextWrapping="NoWrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     HorizontalScrollBarVisibility="Auto"
-                                     FontFamily="Consolas"
-                                     FontSize="12"
-                                     Padding="12" />
-                        </DockPanel>
-                    </TabItem>
-                    <TabItem Header="&#x65E5;&#x5FD7;&#x8F93;&#x51FA;">
-                        <Grid Margin="12">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-
-                            <DockPanel Grid.Row="0"
-                                       Margin="0,0,0,12"
-                                       LastChildFill="False">
-                                <CheckBox x:Name="LogAutoScrollCheckBox"
-                                          Margin="0,0,16,0"
-                                          VerticalAlignment="Center"
-                                          IsChecked="{Binding IsLogAutoScrollEnabled, Mode=TwoWay}"
-                                          Checked="LogAutoScrollCheckBox_Checked"
-                                          Content="&#x81EA;&#x52A8;&#x6EDA;&#x52A8;&#x5230;&#x5E95;&#x90E8;" />
-                                <Button Width="100"
-                                        Height="32"
-                                        Margin="0,0,10,0"
-                                        Content="&#x6EDA;&#x52A8;&#x5230;&#x5E95;&#x90E8;"
-                                        Click="ScrollLogToBottomButton_Click" />
-                                <Button Width="100"
-                                        Height="32"
-                                        Margin="0,0,10,0"
-                                        Content="&#x6E05;&#x7A7A;&#x663E;&#x793A;"
-                                        Command="{Binding ClearLogsCommand}" />
-                                <Button Width="100"
-                                        Height="32"
-                                        Margin="0,0,10,0"
-                                        Content="&#x590D;&#x5236;&#x5F53;&#x524D;&#x65E5;&#x5FD7;"
-                                        Command="{Binding CopyCurrentLogsCommand}" />
-                                <Button Width="120"
-                                        Height="32"
-                                        Margin="0,0,10,0"
-                                        Content="&#x6D4B;&#x8BD5; LLM &#x8FDE;&#x63A5;"
-                                        Command="{Binding TestLlmConnectionCommand}" />
-                                <Button Width="100"
-                                        Height="32"
-                                        Content="&#x5BFC;&#x51FA;&#x65E5;&#x5FD7;"
-                                        Command="{Binding ExportLogsCommand}" />
-                            </DockPanel>
-
-                            <TextBox x:Name="LogTextBox"
-                                     Grid.Row="1"
-                                     Text="{Binding Logs, Mode=OneWay}"
-                                     IsReadOnly="True"
-                                     AcceptsReturn="True"
-                                     AcceptsTab="True"
-                                     TextWrapping="NoWrap"
-                                     VerticalAlignment="Stretch"
-                                     HorizontalAlignment="Stretch"
-                                     VerticalScrollBarVisibility="Auto"
-                                     HorizontalScrollBarVisibility="Auto"
-                                     FontFamily="Consolas"
-                                     FontSize="12"
-                                     Padding="12"
-                                     TextChanged="LogTextBox_TextChanged" />
-                        </Grid>
-                    </TabItem>
-                </TabControl>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Height="30"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Content="重新解析"
+                                    Command="{Binding ReparseCommand}" />
+                            <Button Height="30"
+                                    Margin="4,0,0,0"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Content="清空本轮消息"
+                                    ToolTip="仅清空当前这一条对话内的消息记录，不影响项目快照与其他对话"
+                                    Click="ClearConversationButton_Click" />
+                            <Button Height="30"
+                                    Margin="4,0,0,0"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Content="{Binding AdvancedDebugButtonText}"
+                                    Command="{Binding ToggleAdvancedDebugCommand}" />
+                        </StackPanel>
+                    </DockPanel>
+                </Grid>
             </Border>
-        </Expander>
+
+            <!-- Row 4：高级调试（完整保留全部 4 个页签） -->
+            <Expander Grid.Row="4"
+                      Margin="0,10,0,0"
+                      IsExpanded="{Binding IsAdvancedDebugExpanded, Mode=TwoWay}"
+                      Header="高级调试">
+                <Border Padding="12"
+                        Background="White"
+                        BorderBrush="#FFE2E8F0"
+                        BorderThickness="1"
+                        CornerRadius="0,0,12,12">
+                    <TabControl x:Name="AdvancedDebugTabControl"
+                                MinHeight="240">
+                        <TabItem Header="JSON 结果">
+                            <TextBox Text="{Binding JsonOutput, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalContentAlignment="Top"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     FontFamily="Consolas"
+                                     FontSize="12"
+                                     Padding="10" />
+                        </TabItem>
+                        <TabItem Header="参数表">
+                            <DataGrid ItemsSource="{Binding Parameters}"
+                                      AutoGenerateColumns="False"
+                                      IsReadOnly="True"
+                                      CanUserAddRows="False"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="参数名" Binding="{Binding Name}" Width="2*" />
+                                    <DataGridTextColumn Header="显示名" Binding="{Binding DisplayName}" Width="2*" />
+                                    <DataGridTextColumn Header="数值" Binding="{Binding Value}" Width="*" />
+                                    <DataGridTextColumn Header="单位" Binding="{Binding Unit}" Width="*" />
+                                    <DataGridTextColumn Header="映射状态" Binding="{Binding MappingStatus}" Width="1.4*" />
+                                    <DataGridTextColumn Header="说明" Binding="{Binding Description}" Width="3*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </TabItem>
+                        <TabItem Header="APDL 预览">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top"
+                                            Orientation="Horizontal"
+                                            Margin="12">
+                                    <Button Width="160"
+                                            Height="32"
+                                            Content="生成 APDL 调试文件"
+                                            Command="{Binding GenerateApdlCommand}" />
+                                    <Button Width="140"
+                                            Height="32"
+                                            Margin="10,0,0,0"
+                                            Content="打开输出文件"
+                                            Command="{Binding OpenApdlOutputFileCommand}" />
+                                </StackPanel>
+                                <TextBlock DockPanel.Dock="Top"
+                                           Margin="12,0,12,8"
+                                           Text="{Binding ApdlOutputPath}" />
+                                <TextBox Margin="12"
+                                         Text="{Binding ApdlPreviewContent, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="NoWrap"
+                                         VerticalContentAlignment="Top"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         Padding="10" />
+                            </DockPanel>
+                        </TabItem>
+                        <TabItem Header="日志输出">
+                            <Grid Margin="12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <DockPanel Grid.Row="0"
+                                           Margin="0,0,0,10"
+                                           LastChildFill="False">
+                                    <CheckBox x:Name="LogAutoScrollCheckBox"
+                                              Margin="0,0,16,0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding IsLogAutoScrollEnabled, Mode=TwoWay}"
+                                              Checked="LogAutoScrollCheckBox_Checked"
+                                              Content="自动滚动到底部" />
+                                    <Button Width="100"
+                                            Height="30"
+                                            Margin="0,0,8,0"
+                                            Content="滚动到底部"
+                                            Click="ScrollLogToBottomButton_Click" />
+                                    <Button Width="92"
+                                            Height="30"
+                                            Margin="0,0,8,0"
+                                            Content="清空显示"
+                                            Command="{Binding ClearLogsCommand}" />
+                                    <Button Width="108"
+                                            Height="30"
+                                            Margin="0,0,8,0"
+                                            Content="复制当前日志"
+                                            Command="{Binding CopyCurrentLogsCommand}" />
+                                    <Button Width="116"
+                                            Height="30"
+                                            Margin="0,0,8,0"
+                                            Content="测试 LLM 连接"
+                                            Command="{Binding TestLlmConnectionCommand}" />
+                                    <Button Width="92"
+                                            Height="30"
+                                            Content="导出日志"
+                                            Command="{Binding ExportLogsCommand}" />
+                                </DockPanel>
+
+                                <TextBox x:Name="LogTextBox"
+                                         Grid.Row="1"
+                                         Text="{Binding Logs, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         AcceptsTab="True"
+                                         TextWrapping="NoWrap"
+                                         VerticalContentAlignment="Top"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         Padding="10"
+                                         TextChanged="LogTextBox_TextChanged" />
+                            </Grid>
+                        </TabItem>
+                    </TabControl>
+                </Border>
+            </Expander>
+        </Grid>
     </Grid>
 </Window>

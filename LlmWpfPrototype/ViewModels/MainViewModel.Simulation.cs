@@ -82,13 +82,15 @@ public sealed partial class MainViewModel
                     started ? "启动本地 ANSYS APDL 启动器" : "未找到配置的 ANSYS 启动器",
                     started,
                     ConversationTurnKind.SimulationAction);
+                PersistActiveConversationSnapshot(input);
                 return;
             }
 
             switch (command)
             {
                 case SimulationCommand.ReadBaseline:
-                    if (!_workspaceManager.HasOpenedWorkingModel || _solidWorksService is not SolidWorksService cad)
+                    if (_solidWorksService is not SolidWorksService cad ||
+                        (!_workspaceManager.HasOpenedWorkingModel && !IsActiveDocumentInCurrentProjectWorkspace()))
                     {
                         const string referenceReply = "轻量化对比参考尺寸为 70×70×5 mm（用户提供）。要读取实际尺寸，请先在程序中打开工作模型，再发送“读取轻量化基线”。";
                         AddAssistantMessage(referenceReply);
@@ -99,6 +101,7 @@ public sealed partial class MainViewModel
                             "当前未打开工作模型，返回轻量化参考尺寸提示",
                             succeeded: false,
                             ConversationTurnKind.SimulationAction);
+                        PersistActiveConversationSnapshot(input);
                         return;
                     }
 
@@ -114,6 +117,7 @@ public sealed partial class MainViewModel
                         baseline.AssemblyVerified ? "已读取工作模型轻量化基线尺寸" : "轻量化基线读取未通过完整校验",
                         baseline.AssemblyVerified,
                         ConversationTurnKind.SimulationAction);
+                    PersistActiveConversationSnapshot(input);
                     return;
 
                 case SimulationCommand.RunStudy:
@@ -128,6 +132,7 @@ public sealed partial class MainViewModel
                             "未配置轻量化 APDL 算例文件，未启动求解",
                             succeeded: false,
                             ConversationTurnKind.SimulationAction);
+                        PersistActiveConversationSnapshot(input);
                         return;
                     }
 
@@ -147,6 +152,7 @@ public sealed partial class MainViewModel
                         studySucceeded ? $"完成轻量化仿真比较（{study.Cases.Count} 组算例）" : "轻量化仿真未完全成功",
                         studySucceeded,
                         ConversationTurnKind.SimulationAction);
+                    PersistActiveConversationSnapshot(input);
                     return;
             }
         }
@@ -163,6 +169,7 @@ public sealed partial class MainViewModel
                 $"仿真操作失败：{exception.Message}",
                 succeeded: false,
                 ConversationTurnKind.SimulationAction);
+            PersistActiveConversationSnapshot(input);
         }
     }
 

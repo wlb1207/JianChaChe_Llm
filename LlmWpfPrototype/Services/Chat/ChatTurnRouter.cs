@@ -74,7 +74,8 @@ public static class ChatTurnRouter
             isManualTrussMappingIntent ||
             isAppCapabilityOrStatusQuestion ||
             isExplicitModificationCommand ||
-            isApdlLaunchCandidate)
+            isApdlLaunchCandidate ||
+            IsProjectParameterOrDesignConsultation(input, normalizedInput))
         {
             return false;
         }
@@ -130,6 +131,63 @@ public static class ChatTurnRouter
 
         // Exclude normative engineering questions like "按 GB/T 3811 哪些参数需要校核"
         return !HasStrongNormativeEngineeringSignal(input);
+    }
+
+    public static bool IsCurrentStructureDimensionQuestion(string input, string normalizedInput)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedInput) || HasStrongNormativeEngineeringSignal(input))
+        {
+            return false;
+        }
+
+        var mentionsSizeTerm =
+            normalizedInput.Contains("尺寸", StringComparison.Ordinal) ||
+            normalizedInput.Contains("截面", StringComparison.Ordinal) ||
+            normalizedInput.Contains("壁厚", StringComparison.Ordinal) ||
+            normalizedInput.Contains("规格", StringComparison.Ordinal) ||
+            normalizedInput.Contains("多大", StringComparison.Ordinal) ||
+            normalizedInput.Contains("多少", StringComparison.Ordinal);
+        if (!mentionsSizeTerm)
+        {
+            return false;
+        }
+
+        var asksCurrentState =
+            normalizedInput.Contains("现在", StringComparison.Ordinal) ||
+            normalizedInput.Contains("目前", StringComparison.Ordinal) ||
+            normalizedInput.Contains("当前", StringComparison.Ordinal) ||
+            normalizedInput.Contains("多大", StringComparison.Ordinal) ||
+            normalizedInput.Contains("是多少", StringComparison.Ordinal) ||
+            normalizedInput.Contains("什么规格", StringComparison.Ordinal);
+
+        return asksCurrentState;
+    }
+
+    public static bool IsProjectParameterOrDesignConsultation(string input, string normalizedInput)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedInput) || HasStrongNormativeEngineeringSignal(input))
+        {
+            return false;
+        }
+
+        if (IsCurrentStructureDimensionQuestion(input, normalizedInput))
+        {
+            return true;
+        }
+
+        return normalizedInput.Contains("取值范围", StringComparison.Ordinal) ||
+               normalizedInput.Contains("范围是多少", StringComparison.Ordinal) ||
+               normalizedInput.Contains("什么范围", StringComparison.Ordinal) ||
+               normalizedInput.Contains("上限", StringComparison.Ordinal) ||
+               normalizedInput.Contains("下限", StringComparison.Ordinal) ||
+               normalizedInput.Contains("最大能", StringComparison.Ordinal) ||
+               normalizedInput.Contains("最小能", StringComparison.Ordinal) ||
+               normalizedInput.Contains("怎么改", StringComparison.Ordinal) ||
+               normalizedInput.Contains("如何改", StringComparison.Ordinal) ||
+               normalizedInput.Contains("怎么样", StringComparison.Ordinal) ||
+               normalizedInput.Contains("行不行", StringComparison.Ordinal) ||
+               normalizedInput.Contains("合适吗", StringComparison.Ordinal) ||
+               normalizedInput.Contains("合理吗", StringComparison.Ordinal);
     }
 
     public static bool ShouldPreservePendingCadPlan(

@@ -217,6 +217,65 @@ public sealed class ConversationMemoryStore
         LastApdlLauncherStartedAt = null;
     }
 
+    public List<PersistedTurnRecord> ExportPersistedTurns() =>
+        _turns.Select(t => new PersistedTurnRecord
+        {
+            Timestamp = t.Timestamp,
+            Kind = t.Kind,
+            UserContent = SanitizeForMainHistory(t.UserContent),
+            AssistantContent = t.Kind == ConversationTurnKind.LocalKnowledge
+                ? SummarizeKnowledgeAnswerForMainHistory(t.AssistantContent)
+                : SanitizeForMainHistory(t.AssistantContent)
+        }).ToList();
+
+    public List<PersistedActionRecord> ExportPersistedActions() =>
+        _actions.Select(a => new PersistedActionRecord
+        {
+            Timestamp = a.Timestamp,
+            ActionName = a.ActionName,
+            Summary = SanitizeForMainHistory(a.Summary),
+            Succeeded = a.Succeeded
+        }).ToList();
+
+    public void RestoreFromPersisted(
+        IEnumerable<PersistedTurnRecord>? turns,
+        IEnumerable<PersistedActionRecord>? actions)
+    {
+        Clear();
+        if (turns is not null)
+        {
+            foreach (var item in turns)
+            {
+                if (string.IsNullOrWhiteSpace(item.UserContent) && string.IsNullOrWhiteSpace(item.AssistantContent))
+                    continue;
+                _turns.Add(new ConversationTurnRecord(
+                    item.Timestamp,
+                    item.Kind == ConversationTurnKind.LocalKnowledge ? ConversationTurnKind.Chat : item.Kind,
+                    SanitizeForMainHistory(item.UserContent),
+                    SanitizeForMainHistory(item.AssistantContent)));
+            }
+        }
+
+        if (actions is not null)
+        {
+            foreach (var action in actions)
+            {
+                if (string.IsNullOrWhiteSpace(action.ActionName))
+                    continue;
+                _actions.Add(new ActionAuditEntry(
+                    action.Timestamp,
+                    action.ActionName,
+                    SanitizeForMainHistory(action.Summary),
+                    action.Succeeded));
+                if (action.Succeeded && string.Equals(action.ActionName, "open_apdl_launcher", StringComparison.OrdinalIgnoreCase))
+                {
+                    ApdlLauncherStartCount++;
+                    LastApdlLauncherStartedAt = action.Timestamp;
+                }
+            }
+        }
+    }
+
     private void AddTurn(
         ConversationTurnKind kind,
         string userInput,

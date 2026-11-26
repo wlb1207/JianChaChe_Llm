@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using LlmWpfPrototype.Services.Rag;
 using Binding = System.Windows.Data.Binding;
@@ -49,6 +50,8 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
     private static readonly FontFamily MathFont = new("Cambria Math");
     private static readonly Brush CitationBrush = BrushFromRgb(15, 90, 153);
     private static readonly Brush FormulaBackground = BrushFromRgb(238, 244, 250);
+    private static readonly Brush InlineCodeBackground = BrushFromRgb(241, 245, 249);
+    private static readonly Brush InlineCodeForeground = BrushFromRgb(15, 90, 153);
 
     public string Markup
     {
@@ -78,7 +81,27 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         Background = Brushes.Transparent;
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+        FontFamily = new FontFamily("Microsoft YaHei UI");
+        FontSize = 14;
         Document = BuildDocument("", null, false);
+    }
+
+    protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
+    {
+        if (VerticalScrollBarVisibility is ScrollBarVisibility.Hidden or ScrollBarVisibility.Disabled &&
+            Parent is UIElement parent)
+        {
+            e.Handled = true;
+            var forwarded = new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+            {
+                RoutedEvent = MouseWheelEvent,
+                Source = this
+            };
+            parent.RaiseEvent(forwarded);
+            return;
+        }
+
+        base.OnPreviewMouseWheel(e);
     }
 
     private static void RefreshDocument(DependencyObject sender, DependencyPropertyChangedEventArgs args)
@@ -193,7 +216,12 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
             }
             else if (match.Groups["code"].Success)
             {
-                target.Add(new Run(match.Value[1..^1]) { FontFamily = new FontFamily("Consolas") });
+                target.Add(new Run(" " + match.Value[1..^1] + " ")
+                {
+                    FontFamily = new FontFamily("Consolas"),
+                    Background = InlineCodeBackground,
+                    Foreground = InlineCodeForeground
+                });
             }
             else if (match.Groups["strong"].Success && allowBold)
             {

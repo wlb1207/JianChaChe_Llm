@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Design;
+using LlmWpfPrototype.Services.Project;
 using LlmWpfPrototype.Services.Simulation;
 using LlmWpfPrototype.ViewModels;
 
@@ -319,8 +321,9 @@ Require(llm.LastOptions?.ReplyOnlyMode == false && politeQueryReply.Text.Contain
 // Lower chord & lower truss MUST now require explicit confirmation, and side questions must preserve the pending plan.
 var updatesBeforeLowerChord = cad.Updates.Count;
 var lowerChordPending = await SendAsync(vm, "把下弦杆截面改成 80x80x6");
-Require(lowerChordPending.Text.Contains("待确认修改") && cad.Updates.Count == updatesBeforeLowerChord,
-    "Lower chord edit bypassed confirmation gate. " + lowerChordPending.Text);
+Require(lowerChordPending.Text.Contains("待确认修改") && cad.Updates.Count == updatesBeforeLowerChord &&
+    vm.HasPendingCadConfirmation && vm.ConfirmBusinessCommand.CanExecute(null),
+    "Lower chord edit bypassed confirmation gate or left ConfirmBusinessCommand disabled. " + lowerChordPending.Text);
 
 await SendAsync(vm, "这里面不是有ansys apdl吗？");
 Require((llm.LastOptions?.RuntimeContextSummary?.Contains("当前有待确认的尺寸修改计划") ?? false) &&
@@ -331,8 +334,9 @@ await SendAsync(vm, "确认修改");
 Require(cad.Updates.Count == updatesBeforeLowerChord, "Cancelled lower-chord edit still executed on confirmation.");
 
 var lowerTrussPending = await SendAsync(vm, "把下桁架改成 60x60x6");
-Require(lowerTrussPending.Text.Contains("待确认修改") && cad.Updates.Count == updatesBeforeLowerChord,
-    "Lower truss edit bypassed confirmation gate. " + lowerTrussPending.Text);
+Require(lowerTrussPending.Text.Contains("待确认修改") && cad.Updates.Count == updatesBeforeLowerChord &&
+    vm.ConfirmBusinessCommand.CanExecute(null),
+    "Lower truss edit bypassed confirmation gate or left ConfirmBusinessCommand disabled. " + lowerTrussPending.Text);
 await SendAsync(vm, "取消");
 
 var invalidLowerThickness = await SendAsync(vm, "把下弦杆壁厚改成 15");
@@ -340,6 +344,197 @@ Require(invalidLowerThickness.Text.Contains("超出允许范围") && cad.Updates
     "Invalid lower-chord wall thickness was not rejected before confirmation. " + invalidLowerThickness.Text);
 
 Console.WriteLine("PASS Plan B runtime context injection, unified memory across APDL/CAD/RAG, polite parameter query, and unified lower-chord/lower-truss confirmation");
+
+// =========================================================================
+// Continuous Intelligent Design Upgrade Checks:
+// 1) Deterministic Q355B Section Mechanics & 3-Tier Safety Domain
+// 2) Live Structure Dimension Snapshot & Engineering Advisor Context
+// 3) Multi-Project / Multi-Conversation Persistence Across Simulated Restarts
+// =========================================================================
+var baseCalc = SectionMechanicsCalculator.CalculateRectangularTube(70m, 70m, 5m);
+Require(baseCalc.IsGeometryValid && baseCalc.AreaMm2 == 1300m && baseCalc.LineMassKgPerM == 10.205m &&
+    Math.Round(baseCalc.IxMm4 / 100000m, 2) == 9.21m &&
+    baseCalc.LinkedUpperRedTubeLengthMm == 1280m &&
+    baseCalc.EffectiveHorizontalWalkwayWidthMm == 1270m &&
+    baseCalc.DomainTier == SectionSafetyDomainTier.GeometricExecutable,
+    "Baseline 70x70x5 mechanics calculation mismatch.");
+
+var optCalc = SectionMechanicsCalculator.CalculateRectangularTube(80m, 80m, 4m);
+Require(optCalc.IsGeometryValid && optCalc.MassDeltaPercentVsBase == -6.5m && optCalc.IxDeltaPercentVsBase == 27.5m &&
+    optCalc.LinkedUpperRedTubeLengthMm == 1270m && optCalc.EffectiveHorizontalWalkwayWidthMm == 1260m &&
+    optCalc.DomainTier == SectionSafetyDomainTier.GeometricExecutable,
+    "Optimized 80x80x4 stiffening-while-lightening calculation mismatch.");
+
+var thinCalc = SectionMechanicsCalculator.CalculateRectangularTube(70m, 70m, 4m);
+Require(thinCalc.MassDeltaPercentVsBase == -18.8m && thinCalc.IxDeltaPercentVsBase == -16.4m,
+    "70x70x4 wall-thinning calculation mismatch.");
+
+var lightSmallCalc = SectionMechanicsCalculator.CalculateRectangularTube(50m, 50m, 4m);
+Require(lightSmallCalc.IsGeometryValid && lightSmallCalc.DomainTier == SectionSafetyDomainTier.GeometricExecutable &&
+    lightSmallCalc.EngineeringNote.Contains("仿真", StringComparison.Ordinal),
+    "50x50x4 lightweighting candidate should remain open to simulation-driven verification.");
+
+var degenerateCalc = SectionMechanicsCalculator.CalculateRectangularTube(40m, 40m, 20m);
+Require(!degenerateCalc.IsGeometryValid && degenerateCalc.DomainTier == SectionSafetyDomainTier.InvalidGeometry,
+    "40x40x20 zero-cavity tube must be rejected as InvalidGeometry.");
+Console.WriteLine("PASS Q355B section mechanics calculator & simulation-driven evaluation");
+
+// In vm above, upper chord was already confirmed at 60x60 (V1)! Verify natural read-only structure queries & advisor math:
+var dimQueryCallsBefore = cad.MutatingCalls;
+await SendAsync(vm, "现在的尺寸是多少？目前下桁架的截面尺寸是多少？");
+var dimSummary = llm.LastOptions?.RuntimeContextSummary ?? string.Empty;
+Require(llm.LastOptions?.ReplyOnlyMode == true && cad.MutatingCalls == dimQueryCallsBefore,
+    "Read-only structure dimension question must stay in ReplyOnlyMode with zero CAD mutations.");
+Require(dimSummary.Contains("【当前项目结构截面尺寸状态", StringComparison.Ordinal) &&
+    dimSummary.Contains("上弦杆截面尺寸：外宽 60 mm × 外高 60 mm × 壁厚 5 mm", StringComparison.Ordinal) &&
+    dimSummary.Contains("下弦杆截面尺寸：外宽 70 mm × 外高 70 mm × 壁厚 5 mm", StringComparison.Ordinal) &&
+    dimSummary.Contains("上弦横向联动红管长度 = 1290 mm", StringComparison.Ordinal),
+    "Structure dimension query did not inject live unified upper/lower chord snapshot: " + dimSummary);
+rejectLegacy.Invoke(null, new object?[] { llm.DesignRequests.Last().History, dimSummary });
+
+await SendAsync(vm, "上弦杆的取值范围是多少？如果改成 80x80x4 怎么样？");
+var advisorSummary = llm.LastOptions?.RuntimeContextSummary ?? string.Empty;
+Require(advisorSummary.Contains("有限元仿真", StringComparison.Ordinal) &&
+    !advisorSummary.Contains("减重 -6.5%", StringComparison.Ordinal) &&
+    advisorSummary.Contains("80×80×4", StringComparison.Ordinal) &&
+    advisorSummary.Contains("1270 mm", StringComparison.Ordinal),
+    "Engineering advisor guidance did not keep pre-simulation advice free of premature weight-reduction percentages: " + advisorSummary);
+rejectLegacy.Invoke(null, new object?[] { llm.DesignRequests.Last().History, advisorSummary });
+Console.WriteLine("PASS live structure dimension snapshot & engineering advisor guidance pass disclosure guard");
+
+// Cross-restart multi-project & multi-conversation persistence test
+var persistStoreDir = Path.Combine(workspaceRoot, "persisted_projects_store");
+var workspace1 = new ModelWorkspaceManager(workspaceOptions, service);
+var dispatcher1 = new CommandDispatcher(service, workspace1, members, parser, scans, recommendation,
+    new TrussParameterSetupStateService(service, scans, members));
+var store1 = new DesignProjectStoreService(persistStoreDir, workspaceOptions);
+var vm1 = new MainViewModel(llm, dictionary, new ApdlReplacementService(), service, dispatcher1, workspace1,
+    settings.Llm, chord, members, scans, recommendation, parser, simulation, launcherStarts.Add, store1);
+
+Require(vm1.CurrentVersionTag == "V0" && vm1.FilteredProjects.Count == 1, "Fresh project store must start at V0 with 1 default project.");
+await SendAsync(vm1, "打开当前模型");
+await SendAsync(vm1, "把桁架上弦杆截面改成 60×60");
+await SendAsync(vm1, "确认修改");
+Require(vm1.CurrentVersionTag == "V1" && vm1.CurrentUpperChordHud.Contains("60×60×5", StringComparison.Ordinal),
+    "Confirmed CAD edit did not advance project version to V1 (60x60x5). " + vm1.CurrentUpperChordHud);
+
+// Create a 2nd follow-up conversation inside the same project; verify it shares V1 snapshot
+await vm1.CreateNewConversationCommand.ExecuteAsync();
+Require(vm1.ActiveProject?.Conversations.Count == 2, "Expected 2 conversations in default project.");
+await SendAsync(vm1, "跟进一下，目前上弦杆尺寸是多少？");
+Require((llm.LastOptions?.RuntimeContextSummary ?? string.Empty).Contains("上弦杆截面尺寸：外宽 60 mm × 外高 60 mm × 壁厚 5 mm", StringComparison.Ordinal),
+    "Second conversation in same project did not inherit V1 structural state.");
+
+// Fork a derived project from V1; verify isolated workspace path & inherited V1 state
+var defaultProjVm = vm1.FilteredProjects.Single(p => p.Id == "proj-default");
+await vm1.ForkProjectCommand.ExecuteAsync(defaultProjVm);
+var forkedProjectId = vm1.ActiveProject?.Id ?? throw new InvalidOperationException("Forked project missing.");
+Require(forkedProjectId != "proj-default" && vm1.CurrentVersionTag == "V1" &&
+    vm1.CurrentUpperChordHud.Contains("60×60×5", StringComparison.Ordinal) &&
+    !string.Equals(workspace1.WorkingModelFolder, workspaceOptions.WorkingModelFolder, StringComparison.OrdinalIgnoreCase),
+    "Forked project did not inherit V1 state or switch to an isolated workspace directory.");
+
+// Queue rollback to V0 checkpoint and verify confirmation gate is enforced, then cancel
+var v0Checkpoint = vm1.ActiveVersionHistory.Last(cp => cp.VersionNumber == 0);
+var updatesBeforeRollback = cad.Updates.Count;
+await vm1.RollbackToVersionCommand.ExecuteAsync(v0Checkpoint);
+Require(vm1.ChatMessages.Last().Text.Contains("待确认修改", StringComparison.Ordinal) && cad.Updates.Count == updatesBeforeRollback,
+    "Version rollback bypassed confirmation gate.");
+await SendAsync(vm1, "取消");
+
+// Export thesis experiment Markdown report
+var reportDir = Path.Combine(workspaceRoot, "exported_reports");
+var reportPath = store1.ExportProjectMarkdownReport("proj-default", reportDir);
+Require(File.Exists(reportPath) && File.ReadAllText(reportPath, Encoding.UTF8).Contains("60×60×5", StringComparison.Ordinal),
+    "Exported Markdown report missing V1 60x60x5 record.");
+
+// Save unsent draft and simulate full process exit + cold restart on disk!
+vm1.UserInput = "重启后继续优化下弦杆 80x80x4";
+vm1.FlushActiveSessionOnExit();
+
+var workspace2 = new ModelWorkspaceManager(workspaceOptions, service);
+var dispatcher2 = new CommandDispatcher(service, workspace2, members, parser, scans, recommendation,
+    new TrussParameterSetupStateService(service, scans, members));
+var store2 = new DesignProjectStoreService(persistStoreDir, workspaceOptions);
+var vm2 = new MainViewModel(llm, dictionary, new ApdlReplacementService(), service, dispatcher2, workspace2,
+    settings.Llm, chord, members, scans, recommendation, parser, simulation, launcherStarts.Add, store2);
+
+Require(vm2.ActiveProject?.Id == forkedProjectId &&
+    vm2.CurrentVersionTag == "V1" &&
+    vm2.CurrentUpperChordHud.Contains("60×60×5", StringComparison.Ordinal) &&
+    vm2.UserInput == "重启后继续优化下弦杆 80x80x4" &&
+    vm2.FilteredProjects.Count == 2,
+    "Cold-restarted ViewModel did not restore active project, V1 snapshot, draft input, or project list.");
+
+// Switch back to proj-default in vm2 and verify its 2 conversations and history survived restart
+var restoredDefaultVm = vm2.FilteredProjects.Single(p => p.Id == "proj-default");
+await vm2.SelectProjectCommand.ExecuteAsync(restoredDefaultVm);
+Require(vm2.ActiveProject?.Id == "proj-default" &&
+    vm2.ActiveProject.Conversations.Count == 2 &&
+    vm2.ChatMessages.Any(m => m.Text.Contains("跟进一下", StringComparison.Ordinal)) &&
+    string.Equals(workspace2.WorkingModelFolder, workspaceOptions.WorkingModelFolder, StringComparison.OrdinalIgnoreCase),
+    "Switching back to proj-default after restart did not restore conversations or default workspace folder.");
+
+// Verify unique project numbering after deleting earlier projects (regression for duplicate "轻量化方案 2")
+await vm2.DeleteProjectCommand.ExecuteAsync(restoredDefaultVm);
+Require(vm2.FilteredProjects.Count == 1 && vm2.FilteredProjects[0].RawName == "轻量化方案 1",
+    "Expected single remaining project named 轻量化方案 1, got: " + string.Join(", ", vm2.FilteredProjects.Select(p => p.RawName)));
+await vm2.CreateProjectCommand.ExecuteAsync();
+Require(vm2.FilteredProjects.Count == 2 && vm2.ActiveProject?.Name == "轻量化方案 2",
+    "Expected second project named 轻量化方案 2, got: " + string.Join(", ", vm2.FilteredProjects.Select(p => p.RawName)));
+var scheme1Vm = vm2.FilteredProjects.Single(p => p.RawName == "轻量化方案 1");
+await vm2.DeleteProjectCommand.ExecuteAsync(scheme1Vm);
+// Now only "轻量化方案 2" remains (Count == 1); creating another MUST produce "轻量化方案 3", NOT a duplicate "轻量化方案 2"!
+await vm2.CreateProjectCommand.ExecuteAsync();
+Require(vm2.FilteredProjects.Count == 2 &&
+    vm2.FilteredProjects.Select(p => p.RawName).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 2 &&
+    vm2.ActiveProject?.Name == "轻量化方案 3",
+    "Creating a project after deleting an older one caused duplicate numbering: " + string.Join(", ", vm2.FilteredProjects.Select(p => p.RawName)));
+
+// Verify deleting ALL projects including the very last one enters Option 1A clean empty state (0 messages, HasActiveProject == false)
+foreach (var projItem in vm2.FilteredProjects.ToArray())
+{
+    await vm2.DeleteProjectCommand.ExecuteAsync(projItem);
+}
+Require(vm2.FilteredProjects.Count == 0 && vm2.ActiveProject is null && vm2.HasZeroProjects && !vm2.HasActiveProject && vm2.ChatMessages.Count == 0,
+    "Deleting the last remaining project did not enter clean Option 1A empty state.");
+
+var workspace3 = new ModelWorkspaceManager(workspaceOptions, service);
+var dispatcher3 = new CommandDispatcher(service, workspace3, members, parser, scans, recommendation,
+    new TrussParameterSetupStateService(service, scans, members));
+var store3 = new DesignProjectStoreService(persistStoreDir, workspaceOptions);
+var vm3 = new MainViewModel(llm, dictionary, new ApdlReplacementService(), service, dispatcher3, workspace3,
+    settings.Llm, chord, members, scans, recommendation, parser, simulation, launcherStarts.Add, store3);
+Require(vm3.FilteredProjects.Count == 0 && vm3.ActiveProject is null && !vm3.HasActiveProject && vm3.ChatMessages.Count == 0,
+    "Cold restart unexpectedly resurrected a deleted project or fake chat bubble.");
+
+// Creating a new project from Option 1A empty state cleanly creates "轻量化方案 1" with welcome message (no hardcoded 60~90)
+await vm3.CreateProjectCommand.ExecuteAsync();
+Require(vm3.FilteredProjects.Count == 1 && vm3.ActiveProject?.Name == "轻量化方案 1" && vm3.HasActiveProject &&
+    vm3.ChatMessages.Count == 1 && !vm3.ChatMessages[0].Text.Contains("60~90", StringComparison.Ordinal),
+    "Creating project from Option 1A empty state failed: " + vm3.ActiveProject?.Name);
+
+// Verify 4-state LLM status machine notifies both text AND dot color flags (regression for yellow dot staying stuck after online)
+var notifiedProps = new List<string>();
+vm3.PropertyChanged += (_, e) => { if (!string.IsNullOrEmpty(e.PropertyName)) notifiedProps.Add(e.PropertyName); };
+llm.TestConnectionHandler = () => new LlmConnectionTestResult(
+    true, "https://local.test", "gpt-test", true, 200, 120,
+    null, "models_probe", "gpt-test", 0, 0, 0, "ok", "pong", "pong", null, null, null, null);
+await vm3.TestLlmConnectionCommand.ExecuteAsync();
+Require(vm3.GptStatusSummary.Contains("在线", StringComparison.Ordinal) &&
+    vm3.IsLlmStatusOnline && !vm3.IsLlmStatusConnecting && !vm3.IsLlmStatusError &&
+    notifiedProps.Contains(nameof(MainViewModel.IsLlmStatusOnline)),
+    "TestLlmConnectionCommand updated text without flipping IsLlmStatusOnline green-dot flag.");
+
+llm.TestConnectionHandler = () => new LlmConnectionTestResult(
+    false, "https://local.test", "gpt-test", true, null, 50,
+    null, null, null, null, null, null, null, "", "", null, "TimeoutException", "连接超时", null);
+await vm3.TestLlmConnectionCommand.ExecuteAsync();
+Require(vm3.IsLlmStatusError && !vm3.IsLlmStatusOnline && vm3.GptStatusSummary.Contains("异常", StringComparison.Ordinal),
+    "Failed connection test did not transition to error red-dot state.");
+llm.TestConnectionHandler = null;
+Console.WriteLine("PASS 4-state LLM connectivity status machine, green/red dot synchronization, and reconnect probe");
+Console.WriteLine("PASS multi-project lazy/forked workspaces, unique numbering, zero-project deletion, auto-creation, report export, and cold-restart persistence");
 
 if (args.Contains("--live-apdl", StringComparer.Ordinal))
 {
@@ -491,6 +686,10 @@ sealed class FakeLlm : ILlmService
         return Task.FromResult(KnowledgeAnswer);
     }
 
+    public Func<LlmConnectionTestResult>? TestConnectionHandler { get; set; }
+
     public Task<LlmConnectionTestResult> TestConnectionAsync(string userInput, CancellationToken cancellationToken = default)
-        => throw new InvalidOperationException("The test must not call a remote model.");
+        => TestConnectionHandler is not null
+            ? Task.FromResult(TestConnectionHandler())
+            : throw new InvalidOperationException("The test must not call a remote model.");
 }

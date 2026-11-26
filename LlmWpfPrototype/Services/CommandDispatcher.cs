@@ -310,7 +310,11 @@ public sealed class CommandDispatcher
             var opened = await _solidWorksService.OpenAssemblyAsync(assemblyPath, logWriter, cancellationToken);
             if (opened)
             {
-                assistantMessages.Add("已从初始模型重新生成未修改的工作副本，并打开该工作模型。");
+                var actualPath = _solidWorksService.GetActiveDocumentPath();
+                _workspaceManager.MarkWorkingModelOpened(assemblyPath, actualPath, logWriter);
+                assistantMessages.Add(reinitializeWorkspace
+                    ? "已从初始模型重新生成未修改的工作副本，并打开该工作模型。"
+                    : "已打开当前项目的 SolidWorks 工作模型，可继续在此前版本基础上跟进修改。");
                 return true;
             }
 

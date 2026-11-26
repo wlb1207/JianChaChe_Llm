@@ -29,6 +29,11 @@ public sealed partial class SolidWorksService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var assemblyPath = ValidateBaselineModelPath(expectedWorkingAssemblyPath, ".SLDASM");
+            if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)) &&
+                TryGetRunningApplication(out var runningApp) && runningApp is not null)
+            {
+                _swApp = runningApp;
+            }
             if (_swApp is null)
                 throw new InvalidOperationException("当前程序尚未持有 SolidWorks 会话，请在本程序打开工作总装后再采集。");
             if (_requireIsolatedSession && _swApp.GetProcessID() != _expectedSolidWorksProcessId)
@@ -69,9 +74,11 @@ public sealed partial class SolidWorksService
             }
 
             var observed = new List<LightweightMemberBaseline>();
+            using var treeGuard = SuspendFeatureTreeUpdates(assembly);
             foreach (var member in members.Where(member => member.Enabled &&
                          (member.Id.Equals("upper_chord", StringComparison.OrdinalIgnoreCase) ||
-                          member.Id.Equals("lower_chord", StringComparison.OrdinalIgnoreCase))))
+                          member.Id.Equals("lower_chord", StringComparison.OrdinalIgnoreCase) ||
+                          member.Id.Equals("lower_truss", StringComparison.OrdinalIgnoreCase))))
             {
                 if (member.PartMappings.Count == 0)
                     issues.Add($"{member.Name}没有零件级尺寸映射。");
@@ -145,8 +152,22 @@ public sealed partial class SolidWorksService
             : mapping.PartFilePath.Trim();
         if (string.IsNullOrWhiteSpace(path))
             throw new InvalidOperationException("零件映射没有配置路径。");
-        if (!Path.IsPathRooted(path))
-            path = Path.Combine(_workingModelFolder, path);
+        var normalized = path.Replace('/', Path.DirectorySeparatorChar);
+        if (!Path.IsPathRooted(normalized))
+        {
+            path = Path.Combine(_workingModelFolder, normalized);
+        }
+        else
+        {
+            const string marker = "\\新模型\\";
+            var idx = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                var candidate = Path.Combine(_workingModelFolder, normalized[(idx + marker.Length)..]);
+                if (File.Exists(candidate))
+                    path = candidate;
+            }
+        }
         return ValidateBaselineModelPath(path, ".SLDPRT");
     }
 
@@ -185,6 +206,12 @@ public sealed partial class SolidWorksService
                 throw new InvalidOperationException("组件身份无法确认或路径已变化。");
             configuration = component.ReferencedConfiguration;
             var state = (swComponentSuppressionState_e)component.GetSuppression();
+            if (state is swComponentSuppressionState_e.swComponentLightweight or swComponentSuppressionState_e.swComponentFullyLightweight)
+            {
+                var resolveStatus = component.SetSuppression2((int)swComponentSuppressionState_e.swComponentResolved);
+                if (resolveStatus == (int)swSuppressionError_e.swSuppressionChangeOk)
+                    state = (swComponentSuppressionState_e)component.GetSuppression();
+            }
             if (state is not (swComponentSuppressionState_e.swComponentResolved or
                 swComponentSuppressionState_e.swComponentFullyResolved))
                 throw new InvalidOperationException($"组件未完全解析（状态 {(int)state}）。请在 SolidWorks 中确认该组件后重新采集。");
