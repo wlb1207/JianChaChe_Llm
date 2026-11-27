@@ -107,6 +107,72 @@
             <Setter Property="Foreground" Value="#FF64748B" />
         </Style>
 
+        <Style x:Key="VisionPresetPillButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#FFF0F9FF" />
+            <Setter Property="BorderBrush" Value="#FFBAE6FD" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#FF0369A1" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Padding" Value="10,3.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PillBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="13"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PillBorder" Property="Background" Value="#FFE0F2FE" />
+                                <Setter TargetName="PillBorder" Property="BorderBrush" Value="#FF38BDF8" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PillBorder" Property="Background" Value="#FFBAE6FD" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ImageRemoveBadgeButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#FF334155" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BadgeBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="White"
+                                BorderThickness="1.2"
+                                CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BadgeBorder" Property="Background" Value="#FFDC2626" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ScenarioTaskCardButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="#FFFFFFFF" />
             <Setter Property="BorderBrush" Value="#FFE2E8F0" />
@@ -380,6 +446,9 @@
                                                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                             <MenuItem Header="{Binding PinActionText}"
                                                       Command="{Binding PlacementTarget.Tag.TogglePinProjectCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="导出图文 Word 计算书 (.docx)"
+                                                      Command="{Binding PlacementTarget.Tag.ExportProjectWordReportCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                             <MenuItem Header="导出项目设计及实验报告 (.md)"
                                                       Command="{Binding PlacementTarget.Tag.ExportProjectReportCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
@@ -796,16 +865,16 @@
                                   VerticalScrollBarVisibility="Auto"
                                   ScrollChanged="ChatScrollViewer_ScrollChanged">
                         <StackPanel>
-                            <!-- 方案 A：新对话开屏「本车智能设计简报卡 + 2×2 场景化工程任务卡」（发送首条消息后自动切换为对话流） -->
+                            <!-- 方案 A + 模块 B：新对话开屏「本车智能设计简报卡 + 2×2 场景化工程任务卡」（紧凑一屏排版，发送首条消息后自动切换为对话流） -->
                             <StackPanel Visibility="{Binding ShowWelcomeDashboard, Converter={StaticResource BoolToVis}}"
                                         MaxWidth="980"
                                         HorizontalAlignment="Stretch"
-                                        Margin="2,4,2,8">
+                                        Margin="2,2,2,4">
                                 <!-- 1. 本车智能设计简报主卡片 -->
-                                <Border CornerRadius="13"
+                                <Border CornerRadius="12"
                                         BorderBrush="#FFBAE6FD"
                                         BorderThickness="1"
-                                        Padding="20,18">
+                                        Padding="16,13">
                                     <Border.Background>
                                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                             <GradientStop Color="#FFF0F9FF" Offset="0" />
@@ -826,7 +895,8 @@
                                                         CornerRadius="12"
                                                         Background="#FFECFDF5"
                                                         BorderBrush="#FFA7F3D0"
-                                                        BorderThickness="1">
+                                                        BorderThickness="1"
+                                                        ToolTip="{Binding WelcomeDashboard.KbStatusTooltip}">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Ellipse Width="6.5" Height="6.5" Fill="#FF059669" Margin="0,0,5,0" VerticalAlignment="Center" />
                                                         <TextBlock FontSize="11.5"
@@ -836,11 +906,12 @@
                                                     </StackPanel>
                                                 </Border>
 
-                                                <!-- SolidWorks 状态徽章 -->
+                                                <!-- SolidWorks 状态徽章（仅真正打开工作模型时亮蓝灯，未打开保持中性灰） -->
                                                 <Border Margin="0,0,6,6"
                                                         Padding="9,4"
                                                         CornerRadius="12"
-                                                        BorderThickness="1">
+                                                        BorderThickness="1"
+                                                        ToolTip="{Binding WelcomeDashboard.SolidWorksStatusTooltip}">
                                                     <Border.Style>
                                                         <Style TargetType="Border">
                                                             <Setter Property="Background" Value="#FFF1F5F9" />
@@ -873,17 +944,18 @@
                                                     </StackPanel>
                                                 </Border>
 
-                                                <!-- ANSYS APDL 状态徽章 -->
+                                                <!-- ANSYS APDL 状态徽章（仅真实运行中亮绿灯，未启动保持与 SolidWorks 一致的中性灰） -->
                                                 <Border Margin="0,0,0,6"
                                                         Padding="9,4"
                                                         CornerRadius="12"
-                                                        BorderThickness="1">
+                                                        BorderThickness="1"
+                                                        ToolTip="{Binding WelcomeDashboard.ApdlStatusTooltip}">
                                                     <Border.Style>
                                                         <Style TargetType="Border">
-                                                            <Setter Property="Background" Value="#FFF8FAFC" />
-                                                            <Setter Property="BorderBrush" Value="#FFE2E8F0" />
+                                                            <Setter Property="Background" Value="#FFF1F5F9" />
+                                                            <Setter Property="BorderBrush" Value="#FFCBD5E1" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlReady}" Value="True">
+                                                                <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlRunning}" Value="True">
                                                                     <Setter Property="Background" Value="#FFECFDF5" />
                                                                     <Setter Property="BorderBrush" Value="#FFA7F3D0" />
                                                                 </DataTrigger>
@@ -894,9 +966,9 @@
                                                         <Ellipse Width="6.5" Height="6.5" Margin="0,0,5,0" VerticalAlignment="Center">
                                                             <Ellipse.Style>
                                                                 <Style TargetType="Ellipse">
-                                                                    <Setter Property="Fill" Value="#FF94A3B8" />
+                                                                    <Setter Property="Fill" Value="#FF64748B" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlReady}" Value="True">
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlRunning}" Value="True">
                                                                             <Setter Property="Fill" Value="#FF059669" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -963,10 +1035,10 @@
                                         </Border>
 
                                         <!-- 中部：上/下弦杆实时截面与规范体检双卡 -->
-                                        <Grid Margin="0,14,0,0">
+                                        <Grid Margin="0,10,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="10" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
 
@@ -975,14 +1047,15 @@
                                                     Background="White"
                                                     BorderBrush="#FFE2E8F0"
                                                     BorderThickness="1"
-                                                    CornerRadius="10"
-                                                    Padding="14,11">
+                                                    CornerRadius="9"
+                                                    Padding="12,9">
                                                 <StackPanel>
                                                     <DockPanel>
                                                         <Border DockPanel.Dock="Right"
                                                                 Padding="7,2"
                                                                 CornerRadius="10"
-                                                                VerticalAlignment="Center">
+                                                                VerticalAlignment="Center"
+                                                                ToolTip="{Binding WelcomeDashboard.UpperChord.StatusBadgeTooltip}">
                                                             <Border.Style>
                                                                 <Style TargetType="Border">
                                                                     <Setter Property="Background" Value="#FFECFDF5" />
@@ -1012,8 +1085,8 @@
                                                                    VerticalAlignment="Center"
                                                                    Text="{Binding WelcomeDashboard.UpperChord.RoleTitle}" />
                                                     </DockPanel>
-                                                    <TextBlock Margin="0,6,0,4"
-                                                               FontSize="18"
+                                                    <TextBlock Margin="0,4,0,3"
+                                                               FontSize="16"
                                                                FontWeight="Bold"
                                                                Foreground="#FF0F172A"
                                                                Text="{Binding WelcomeDashboard.UpperChord.SpecText}" />
@@ -1021,7 +1094,7 @@
                                                                Foreground="#FF475569"
                                                                TextWrapping="Wrap"
                                                                Text="{Binding WelcomeDashboard.UpperChord.Line1}" />
-                                                    <TextBlock Margin="0,2,0,0"
+                                                    <TextBlock Margin="0,1.5,0,0"
                                                                FontSize="11.5"
                                                                Foreground="#FF64748B"
                                                                TextWrapping="Wrap"
@@ -1034,14 +1107,15 @@
                                                     Background="White"
                                                     BorderBrush="#FFE2E8F0"
                                                     BorderThickness="1"
-                                                    CornerRadius="10"
-                                                    Padding="14,11">
+                                                    CornerRadius="9"
+                                                    Padding="12,9">
                                                 <StackPanel>
                                                     <DockPanel>
                                                         <Border DockPanel.Dock="Right"
                                                                 Padding="7,2"
                                                                 CornerRadius="10"
-                                                                VerticalAlignment="Center">
+                                                                VerticalAlignment="Center"
+                                                                ToolTip="{Binding WelcomeDashboard.LowerChord.StatusBadgeTooltip}">
                                                             <Border.Style>
                                                                 <Style TargetType="Border">
                                                                     <Setter Property="Background" Value="#FFECFDF5" />
@@ -1071,8 +1145,8 @@
                                                                    VerticalAlignment="Center"
                                                                    Text="{Binding WelcomeDashboard.LowerChord.RoleTitle}" />
                                                     </DockPanel>
-                                                    <TextBlock Margin="0,6,0,4"
-                                                               FontSize="18"
+                                                    <TextBlock Margin="0,4,0,3"
+                                                               FontSize="16"
                                                                FontWeight="Bold"
                                                                Foreground="#FF0F172A"
                                                                Text="{Binding WelcomeDashboard.LowerChord.SpecText}" />
@@ -1080,7 +1154,7 @@
                                                                Foreground="#FF475569"
                                                                TextWrapping="Wrap"
                                                                Text="{Binding WelcomeDashboard.LowerChord.Line1}" />
-                                                    <TextBlock Margin="0,2,0,0"
+                                                    <TextBlock Margin="0,1.5,0,0"
                                                                FontSize="11.5"
                                                                Foreground="#FF64748B"
                                                                TextWrapping="Wrap"
@@ -1089,16 +1163,53 @@
                                             </Border>
                                         </Grid>
 
-                                        <!-- 底部：绑定本车的三规范核心控制红线条 -->
-                                        <Border Margin="0,12,0,0"
-                                                Padding="12,8"
-                                                CornerRadius="9"
+                                        <!-- 底部：绑定本车的三规范核心控制红线条 + 一键查看高清结构示意图 -->
+                                        <Border Margin="0,9,0,0"
+                                                Padding="10,6"
+                                                CornerRadius="8"
                                                 Background="#FFF8FAFC"
                                                 BorderBrush="#FFE2E8F0"
                                                 BorderThickness="1">
                                             <DockPanel>
+                                                <StackPanel DockPanel.Dock="Right"
+                                                            Orientation="Horizontal"
+                                                            VerticalAlignment="Center"
+                                                            Margin="8,0,0,0">
+                                                    <Button Padding="8,2.5"
+                                                            FontSize="11.5"
+                                                            Foreground="#FF0369A1"
+                                                            Background="#FFF0F9FF"
+                                                            BorderBrush="#FFBAE6FD"
+                                                            BorderThickness="1"
+                                                            Cursor="Hand"
+                                                            Content="联动断面图"
+                                                            ToolTip="打开高清矢量图：查看主桁架弦杆截面与横向红管自动补偿联动关系"
+                                                            Command="{Binding PreviewVehicleLinkageDiagramCommand}" />
+                                                    <Button Margin="6,0,0,0"
+                                                            Padding="8,2.5"
+                                                            FontSize="11.5"
+                                                            Foreground="#FF047857"
+                                                            Background="#FFECFDF5"
+                                                            BorderBrush="#FFA7F3D0"
+                                                            BorderThickness="1"
+                                                            Cursor="Hand"
+                                                            Content="整车挠度图"
+                                                            ToolTip="打开高清矢量图：查看本车 18.90 m 总跨、7.35 m 悬臂静挠度与静动载试验边界"
+                                                            Command="{Binding PreviewVehicleDeflectionDiagramCommand}" />
+                                                    <Button Margin="6,0,0,0"
+                                                            Padding="8,2.5"
+                                                            FontSize="11.5"
+                                                            Foreground="#FF6D28D9"
+                                                            Background="#FFF5F3FF"
+                                                            BorderBrush="#FFDDD6FE"
+                                                            BorderThickness="1"
+                                                            Cursor="Hand"
+                                                            Content="{Binding WelcomeDashboard.KnowledgeFigureGalleryButtonText}"
+                                                            ToolTip="按规范分类浏览全部内置高清矢量工程图（含 GB 50661 焊接图、GB 50017、GB/T 3811、GB/T 6728、GB/T 1591 与 JT/T 1430）"
+                                                            Command="{Binding OpenKnowledgeFigureGalleryCommand}" />
+                                                </StackPanel>
                                                 <TextBlock DockPanel.Dock="Left"
-                                                           Margin="0,3,10,0"
+                                                           Margin="0,3,8,0"
                                                            FontSize="11.5"
                                                            FontWeight="SemiBold"
                                                            Foreground="#FF334155"
@@ -1112,8 +1223,8 @@
                                                     </ItemsControl.ItemsPanel>
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
-                                                            <Border Margin="0,2,8,2"
-                                                                    Padding="8,2.5"
+                                                            <Border Margin="0,1.5,6,1.5"
+                                                                    Padding="7,2"
                                                                     CornerRadius="6"
                                                                     Background="White"
                                                                     BorderBrush="#FFE2E8F0"
@@ -1131,8 +1242,8 @@
                                 </Border>
 
                                 <!-- 2. 2×2 场景化工程任务卡片 -->
-                                <TextBlock Margin="4,16,0,9"
-                                           FontSize="12.5"
+                                <TextBlock Margin="4,11,0,6"
+                                           FontSize="12"
                                            FontWeight="SemiBold"
                                            Foreground="#FF64748B"
                                            Text="选择典型工程场景直接开始，或在下方输入您的设计意图：" />
@@ -1145,13 +1256,14 @@
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type vm:WelcomeScenarioCardItem}">
-                                            <Button Margin="0,0,10,10"
+                                            <Button Margin="0,0,8,8"
+                                                    Padding="12,10"
                                                     Style="{StaticResource ScenarioTaskCardButtonStyle}"
                                                     Command="{Binding DataContext.SendQuickPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                     CommandParameter="{Binding Prompt}">
                                                 <StackPanel>
                                                     <Border HorizontalAlignment="Left"
-                                                            Padding="8,2.5"
+                                                            Padding="7,2"
                                                             CornerRadius="6"
                                                             Background="{Binding TagBackgroundHex}">
                                                         <TextBlock FontSize="11"
@@ -1159,18 +1271,18 @@
                                                                    Foreground="{Binding TagForegroundHex}"
                                                                    Text="{Binding Tag}" />
                                                     </Border>
-                                                    <TextBlock Margin="0,8,0,4"
-                                                               FontSize="14"
+                                                    <TextBlock Margin="0,6,0,3"
+                                                               FontSize="13.5"
                                                                FontWeight="SemiBold"
                                                                Foreground="#FF0F172A"
                                                                TextWrapping="Wrap"
                                                                Text="{Binding Title}" />
-                                                    <TextBlock FontSize="12"
+                                                    <TextBlock FontSize="11.5"
                                                                Foreground="#FF64748B"
-                                                               LineHeight="18"
+                                                               LineHeight="17"
                                                                TextWrapping="Wrap"
                                                                Text="{Binding Description}" />
-                                                    <TextBlock Margin="0,8,0,0"
+                                                    <TextBlock Margin="0,6,0,0"
                                                                FontSize="11.5"
                                                                FontWeight="Medium"
                                                                Foreground="#FF0284C7"
@@ -1181,6 +1293,362 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                            </StackPanel>
+
+                            <!-- 方案 A：对话流顶部紧凑「工程上下文条（含常驻 SW/APDL 状态灯）+ 完整可展开工作台简报与 4 快捷操作」 -->
+                            <StackPanel Visibility="{Binding ShowCompactChatContextBar, Converter={StaticResource BoolToVis}}"
+                                        Margin="0,0,0,12">
+                                <Border Padding="11,6.5"
+                                        CornerRadius="9"
+                                        Background="#FFF8FAFC"
+                                        BorderBrush="#FFE2E8F0"
+                                        BorderThickness="1">
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right"
+                                                    Orientation="Horizontal"
+                                                    VerticalAlignment="Center"
+                                                    Margin="10,0,0,0">
+                                            <!-- SolidWorks 常驻迷你状态灯 -->
+                                            <Border Margin="0,0,6,0"
+                                                    Padding="7,2.5"
+                                                    CornerRadius="10"
+                                                    BorderThickness="1"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="{Binding WelcomeDashboard.SolidWorksStatusTooltip}">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="#FFF1F5F9" />
+                                                        <Setter Property="BorderBrush" Value="#FFCBD5E1" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding WelcomeDashboard.IsSolidWorksOpened}" Value="True">
+                                                                <Setter Property="Background" Value="#FFE0F2FE" />
+                                                                <Setter Property="BorderBrush" Value="#FF7DD3FC" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Ellipse Width="6" Height="6" Margin="0,0,4.5,0" VerticalAlignment="Center">
+                                                        <Ellipse.Style>
+                                                            <Style TargetType="Ellipse">
+                                                                <Setter Property="Fill" Value="#FF64748B" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding WelcomeDashboard.IsSolidWorksOpened}" Value="True">
+                                                                        <Setter Property="Fill" Value="#FF0284C7" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Ellipse.Style>
+                                                    </Ellipse>
+                                                    <TextBlock FontSize="11"
+                                                               FontWeight="Medium"
+                                                               Foreground="#FF334155"
+                                                               Text="{Binding WelcomeDashboard.SolidWorksStatusText}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- ANSYS APDL 常驻迷你状态灯 -->
+                                            <Border Margin="0,0,8,0"
+                                                    Padding="7,2.5"
+                                                    CornerRadius="10"
+                                                    BorderThickness="1"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="{Binding WelcomeDashboard.ApdlStatusTooltip}">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="#FFF1F5F9" />
+                                                        <Setter Property="BorderBrush" Value="#FFCBD5E1" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlRunning}" Value="True">
+                                                                <Setter Property="Background" Value="#FFECFDF5" />
+                                                                <Setter Property="BorderBrush" Value="#FFA7F3D0" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Ellipse Width="6" Height="6" Margin="0,0,4.5,0" VerticalAlignment="Center">
+                                                        <Ellipse.Style>
+                                                            <Style TargetType="Ellipse">
+                                                                <Setter Property="Fill" Value="#FF64748B" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding WelcomeDashboard.IsApdlRunning}" Value="True">
+                                                                        <Setter Property="Fill" Value="#FF059669" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Ellipse.Style>
+                                                    </Ellipse>
+                                                    <TextBlock FontSize="11"
+                                                               FontWeight="Medium"
+                                                               Foreground="#FF334155"
+                                                               Text="{Binding WelcomeDashboard.ApdlStatusText}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Button Padding="9,3"
+                                                    FontSize="11.5"
+                                                    Foreground="#FF0369A1"
+                                                    Background="#FFF0F9FF"
+                                                    BorderBrush="#FFBAE6FD"
+                                                    Content="{Binding BriefingToggleButtonText}"
+                                                    Command="{Binding ToggleChatBriefingCommand}" />
+                                        </StackPanel>
+
+                                        <Grid VerticalAlignment="Center"
+                                              ToolTip="{Binding CompactChatContextTooltip}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse Grid.Column="0"
+                                                     Width="6.5"
+                                                     Height="6.5"
+                                                     Fill="#FF0284C7"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       FontSize="12"
+                                                       Foreground="#FF475569"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding CompactChatContextText}" />
+                                        </Grid>
+                                    </DockPanel>
+                                </Border>
+
+                                <!-- 按需展开的完整内联设计工作台简报卡（含体检徽章、红线、查图与 4 快捷操作） -->
+                                <Border Margin="0,8,0,0"
+                                        Padding="14,12"
+                                        CornerRadius="11"
+                                        BorderBrush="#FFBAE6FD"
+                                        BorderThickness="1"
+                                        Visibility="{Binding ShowExpandedInlineBriefing, Converter={StaticResource BoolToVis}}">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#FFF0F9FF" Offset="0" />
+                                            <GradientStop Color="#FFFFFFFF" Offset="0.55" />
+                                            <GradientStop Color="#FFF8FAFC" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <Border DockPanel.Dock="Right"
+                                                    Margin="10,0,0,0"
+                                                    Padding="8,2.5"
+                                                    CornerRadius="10"
+                                                    Background="#FFECFDF5"
+                                                    BorderBrush="#FFA7F3D0"
+                                                    BorderThickness="1"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="{Binding WelcomeDashboard.KbStatusTooltip}">
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Ellipse Width="6" Height="6" Fill="#FF059669" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                    <TextBlock FontSize="11" FontWeight="Medium" Foreground="#FF047857" Text="{Binding WelcomeDashboard.KbStatusText}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <TextBlock FontSize="12"
+                                                       Foreground="#FF475569"
+                                                       TextWrapping="Wrap"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding WelcomeDashboard.VehicleSubtitle}" />
+                                        </DockPanel>
+
+                                        <Grid Margin="0,9,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="10" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Background="White" BorderBrush="#FFE2E8F0" BorderThickness="1" CornerRadius="8" Padding="11,8">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <Border DockPanel.Dock="Right"
+                                                                Padding="7,1.5"
+                                                                CornerRadius="9"
+                                                                VerticalAlignment="Center"
+                                                                ToolTip="{Binding WelcomeDashboard.UpperChord.StatusBadgeTooltip}">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#FFECFDF5" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.UpperChord.HasWarning}" Value="True">
+                                                                            <Setter Property="Background" Value="#FFFEF3C7" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock FontSize="10.5" FontWeight="SemiBold" Text="{Binding WelcomeDashboard.UpperChord.StatusBadgeText}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#FF047857" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding WelcomeDashboard.UpperChord.HasWarning}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#FFB45309" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Border>
+                                                        <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="#FF334155" VerticalAlignment="Center">
+                                                            <Run Text="{Binding WelcomeDashboard.UpperChord.RoleTitle, Mode=OneWay}" />
+                                                            <Run Text=" · " />
+                                                            <Run Text="{Binding WelcomeDashboard.UpperChord.SpecText, Mode=OneWay}" Foreground="#FF0F172A" FontWeight="Bold" />
+                                                        </TextBlock>
+                                                    </DockPanel>
+                                                    <TextBlock Margin="0,4,0,0" FontSize="11.5" Foreground="#FF475569" TextWrapping="Wrap" Text="{Binding WelcomeDashboard.UpperChord.Line1}" />
+                                                    <TextBlock Margin="0,1.5,0,0" FontSize="11" Foreground="#FF64748B" TextWrapping="Wrap" Text="{Binding WelcomeDashboard.UpperChord.Line2}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="2" Background="White" BorderBrush="#FFE2E8F0" BorderThickness="1" CornerRadius="8" Padding="11,8">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <Border DockPanel.Dock="Right"
+                                                                Padding="7,1.5"
+                                                                CornerRadius="9"
+                                                                VerticalAlignment="Center"
+                                                                ToolTip="{Binding WelcomeDashboard.LowerChord.StatusBadgeTooltip}">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#FFECFDF5" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding WelcomeDashboard.LowerChord.HasWarning}" Value="True">
+                                                                            <Setter Property="Background" Value="#FFFEF3C7" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock FontSize="10.5" FontWeight="SemiBold" Text="{Binding WelcomeDashboard.LowerChord.StatusBadgeText}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#FF047857" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding WelcomeDashboard.LowerChord.HasWarning}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#FFB45309" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Border>
+                                                        <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="#FF334155" VerticalAlignment="Center">
+                                                            <Run Text="{Binding WelcomeDashboard.LowerChord.RoleTitle, Mode=OneWay}" />
+                                                            <Run Text=" · " />
+                                                            <Run Text="{Binding WelcomeDashboard.LowerChord.SpecText, Mode=OneWay}" Foreground="#FF0F172A" FontWeight="Bold" />
+                                                        </TextBlock>
+                                                    </DockPanel>
+                                                    <TextBlock Margin="0,4,0,0" FontSize="11.5" Foreground="#FF475569" TextWrapping="Wrap" Text="{Binding WelcomeDashboard.LowerChord.Line1}" />
+                                                    <TextBlock Margin="0,1.5,0,0" FontSize="11" Foreground="#FF64748B" TextWrapping="Wrap" Text="{Binding WelcomeDashboard.LowerChord.Line2}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+
+                                        <DockPanel Margin="0,8,0,0">
+                                            <StackPanel DockPanel.Dock="Right"
+                                                        Orientation="Horizontal"
+                                                        VerticalAlignment="Center"
+                                                        Margin="8,0,0,0">
+                                                <Button Padding="8,2.5"
+                                                        FontSize="11"
+                                                        Foreground="#FF0369A1"
+                                                        Background="#FFF0F9FF"
+                                                        BorderBrush="#FFBAE6FD"
+                                                        BorderThickness="1"
+                                                        Cursor="Hand"
+                                                        Content="联动断面图"
+                                                        ToolTip="查看本车上/下弦杆截面与红管补偿联动高清矢量图"
+                                                        Command="{Binding PreviewVehicleLinkageDiagramCommand}" />
+                                                <Button Margin="6,0,0,0"
+                                                        Padding="8,2.5"
+                                                        FontSize="11"
+                                                        Foreground="#FF047857"
+                                                        Background="#FFECFDF5"
+                                                        BorderBrush="#FFA7F3D0"
+                                                        BorderThickness="1"
+                                                        Cursor="Hand"
+                                                        Content="整车挠度图"
+                                                        ToolTip="查看本车总体立面、悬臂静挠度与试验载荷高清矢量图"
+                                                        Command="{Binding PreviewVehicleDeflectionDiagramCommand}" />
+                                                <Button Margin="6,0,0,0"
+                                                        Padding="8,2.5"
+                                                        FontSize="11"
+                                                        Foreground="#FF6D28D9"
+                                                        Background="#FFF5F3FF"
+                                                        BorderBrush="#FFDDD6FE"
+                                                        BorderThickness="1"
+                                                        Cursor="Hand"
+                                                        Content="{Binding WelcomeDashboard.KnowledgeFigureGalleryButtonText}"
+                                                        ToolTip="按规范分类浏览全部内置高清矢量工程图，点击放大缩放"
+                                                        Command="{Binding OpenKnowledgeFigureGalleryCommand}" />
+                                            </StackPanel>
+                                            <ItemsControl ItemsSource="{Binding WelcomeDashboard.RedlineItems}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Margin="0,1.5,6,1.5" Padding="7,2" CornerRadius="6" Background="White" BorderBrush="#FFE2E8F0" BorderThickness="1">
+                                                            <TextBlock FontSize="11" Foreground="#FF475569" Text="{Binding}" />
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </DockPanel>
+
+                                        <!-- 方案 A 补齐：4 大工程域紧凑快捷操作条（点击自动收起简报并执行） -->
+                                        <Border Margin="0,9,0,0"
+                                                Padding="0,8,0,0"
+                                                BorderBrush="#FFE2E8F0"
+                                                BorderThickness="0,1,0,0">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Top"
+                                                           Margin="2,0,0,6"
+                                                           FontSize="11"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#FF64748B"
+                                                           Text="快捷工程入口（点击直接执行并收起简报）：" />
+                                                <ItemsControl ItemsSource="{Binding WelcomeDashboard.ScenarioCards}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <UniformGrid Columns="4" />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type vm:WelcomeScenarioCardItem}">
+                                                            <Button Margin="0,0,6,0"
+                                                                    Padding="9,7"
+                                                                    Style="{StaticResource ScenarioTaskCardButtonStyle}"
+                                                                    ToolTip="{Binding Description}"
+                                                                    Command="{Binding DataContext.SendQuickPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding Prompt}">
+                                                                <StackPanel>
+                                                                    <Border HorizontalAlignment="Left"
+                                                                            Padding="6,1.5"
+                                                                            CornerRadius="5"
+                                                                            Background="{Binding TagBackgroundHex}">
+                                                                        <TextBlock FontSize="10.5"
+                                                                                   FontWeight="SemiBold"
+                                                                                   Foreground="{Binding TagForegroundHex}"
+                                                                                   Text="{Binding Tag}" />
+                                                                    </Border>
+                                                                    <TextBlock Margin="0,4.5,0,0"
+                                                                               FontSize="11.8"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="#FF0F172A"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               Text="{Binding Title}" />
+                                                                </StackPanel>
+                                                            </Button>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </DockPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
 
                             <!-- 正常多轮对话消息流（用户发送首条消息或点击场景卡片后显示） -->
@@ -1241,6 +1709,53 @@
                                                                      Markup="{Binding Text}"
                                                                      HideSourceReferences="False" />
 
+                                                <!-- 用户消息附带图片缩略图（点击可高清缩放预览） -->
+                                                <ItemsControl x:Name="UserAttachedImagesStrip"
+                                                              Margin="0,2,0,6"
+                                                              ItemsSource="{Binding AttachedImages}"
+                                                              Visibility="{Binding HasAttachedImages, Converter={StaticResource BoolToVis}}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel Orientation="Horizontal" />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Button Margin="0,0,8,6"
+                                                                    Padding="0"
+                                                                    BorderThickness="0"
+                                                                    Background="Transparent"
+                                                                    Cursor="Hand"
+                                                                    FocusVisualStyle="{x:Null}"
+                                                                    ToolTip="{Binding TooltipText}"
+                                                                    Command="{Binding DataContext.PreviewImageAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}">
+                                                                <Border Background="White"
+                                                                        BorderBrush="#FF93C5FD"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="8"
+                                                                        Padding="3">
+                                                                    <StackPanel>
+                                                                        <Border CornerRadius="6" ClipToBounds="True" MaxWidth="168" MaxHeight="126">
+                                                                            <Image Source="{Binding ThumbnailBitmap}"
+                                                                                   Stretch="Uniform"
+                                                                                   MaxWidth="168"
+                                                                                   MaxHeight="126"
+                                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                                                        </Border>
+                                                                        <TextBlock Margin="2,3,2,0"
+                                                                                   MaxWidth="164"
+                                                                                   FontSize="10.5"
+                                                                                   Foreground="#FF475569"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   Text="{Binding FileName}" />
+                                                                    </StackPanel>
+                                                                </Border>
+                                                            </Button>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
                                                 <!-- 用户消息：保持原样清晰只读文本 -->
                                                 <TextBox x:Name="UserPlainText"
                                                          Style="{StaticResource BorderlessTextBoxStyle}"
@@ -1264,6 +1779,9 @@
                                             </StackPanel>
                                         </Border>
                                         <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsSystemWelcomeAnchor}" Value="True">
+                                                <Setter TargetName="Bubble" Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
                                             <DataTrigger Binding="{Binding RoleDisplay}" Value="AI">
                                                 <Setter TargetName="RoleHeaderText" Property="Text" Value="智能设计助手" />
                                             </DataTrigger>
@@ -1286,9 +1804,15 @@
                                                 <Setter TargetName="RoleAvatarText" Property="Foreground" Value="White" />
                                                 <Setter TargetName="RoleHeaderText" Property="Visibility" Value="Collapsed" />
                                                 <Setter TargetName="FormattedAiReply" Property="Visibility" Value="Collapsed" />
-                                                <Setter TargetName="UserPlainText" Property="Visibility" Value="Visible" />
                                                 <Setter TargetName="CopyBubbleButton" Property="Visibility" Value="Collapsed" />
                                             </DataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsUser}" Value="True" />
+                                                    <Condition Binding="{Binding HasVisibleText}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter TargetName="UserPlainText" Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
                                         </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -1315,7 +1839,7 @@
                                     Style="{StaticResource DangerSoftButtonStyle}"
                                     Content="停止等待"
                                     Command="{Binding CancelChatCommand}"
-                                    Visibility="{Binding IsChatBusy, Converter={StaticResource BoolToVis}}" />
+                                    Visibility="{Binding CanCancelActiveTask, Converter={StaticResource BoolToVis}}" />
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Ellipse Width="8" Height="8" Fill="#FF0284C7" Margin="0,0,8,0" VerticalAlignment="Center" />
                                 <TextBlock FontSize="12.5"
@@ -1344,6 +1868,17 @@
                         Visibility="{Binding HasPendingCadConfirmation, Converter={StaticResource BoolToVis}}">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
+                            <Button Margin="0,0,8,0"
+                                    Padding="10,4"
+                                    FontSize="12"
+                                    Foreground="#FF0369A1"
+                                    Background="#FFF0F9FF"
+                                    BorderBrush="#FF7DD3FC"
+                                    BorderThickness="1"
+                                    Cursor="Hand"
+                                    Content="联动断面图"
+                                    ToolTip="核对改模前上/下弦杆外宽、红管长度补偿与通道净宽的联动关系"
+                                    Command="{Binding PreviewVehicleLinkageDiagramCommand}" />
                             <Button Style="{StaticResource SuccessButtonStyle}"
                                     Content="✓ 确认执行改模"
                                     Command="{Binding ConfirmBusinessCommand}" />
@@ -1366,12 +1901,15 @@
                 </Border>
             </StackPanel>
 
-            <!-- Row 3：一体式现代圆角输入卡片（仅在存在活动项目时展示） -->
+            <!-- Row 3：一体式现代圆角输入卡片（支持图片上传/粘贴/拖拽与一键快捷识图，仅在存在活动项目时展示） -->
             <Border Grid.Row="3"
                     Padding="12,10,12,10"
                     Background="White"
                     BorderThickness="1.2"
                     CornerRadius="14"
+                    AllowDrop="True"
+                    PreviewDragOver="Composer_PreviewDragOver"
+                    PreviewDrop="Composer_Drop"
                     Visibility="{Binding HasActiveProject, Converter={StaticResource BoolToVis}}">
                 <Border.Style>
                     <Style TargetType="Border">
@@ -1387,10 +1925,122 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- 多行输入文本框（Enter 发送，Shift+Enter 换行） -->
-                    <Grid Grid.Row="0" MinHeight="64" MaxHeight="150">
+                    <!-- 待发送工程图片预览条 + 方式2一键快捷识图胶囊（仅附带图片时自动展开） -->
+                    <Border Grid.Row="0"
+                            Margin="0,0,0,8"
+                            Padding="10,8"
+                            Background="#FFF8FAFC"
+                            BorderBrush="#FFDBEAFE"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Visibility="{Binding HasPendingImages, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,6">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Margin="0,0,8,0"
+                                               FontSize="11.5"
+                                               Foreground="#FF64748B"
+                                               VerticalAlignment="Center"
+                                               Text="{Binding PendingImagesCountText}" />
+                                    <Button Height="24"
+                                            Padding="8,1"
+                                            FontSize="11.5"
+                                            Style="{StaticResource GhostButtonStyle}"
+                                            Content="清空图片"
+                                            Command="{Binding ClearPendingImagesCommand}" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{Binding PendingImageAttachments}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,8,4" Width="68" Height="68">
+                                                <Button Padding="0"
+                                                        BorderThickness="0"
+                                                        Background="Transparent"
+                                                        Cursor="Hand"
+                                                        FocusVisualStyle="{x:Null}"
+                                                        ToolTip="{Binding TooltipText}"
+                                                        Command="{Binding DataContext.PreviewImageAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}">
+                                                    <Border Width="64"
+                                                            Height="64"
+                                                            HorizontalAlignment="Left"
+                                                            VerticalAlignment="Bottom"
+                                                            Background="White"
+                                                            BorderBrush="#FFCBD5E1"
+                                                            BorderThickness="1"
+                                                            CornerRadius="8"
+                                                            ClipToBounds="True">
+                                                        <Image Source="{Binding ThumbnailBitmap}"
+                                                               Stretch="UniformToFill"
+                                                               RenderOptions.BitmapScalingMode="HighQuality" />
+                                                    </Border>
+                                                </Button>
+                                                <Button Width="19"
+                                                        Height="19"
+                                                        HorizontalAlignment="Right"
+                                                        VerticalAlignment="Top"
+                                                        Style="{StaticResource ImageRemoveBadgeButtonStyle}"
+                                                        Content="✕"
+                                                        ToolTip="移除此图片"
+                                                        Command="{Binding DataContext.RemovePendingImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </DockPanel>
+
+                            <!-- 方式2：一键快捷识图场景胶囊（不打字点一下直接发送） -->
+                            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Margin="0,0,8,0"
+                                           FontSize="11.5"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF0369A1"
+                                           VerticalAlignment="Center"
+                                           Text="一键识图：" />
+                                <Button Margin="0,0,6,2"
+                                        Style="{StaticResource VisionPresetPillButtonStyle}"
+                                        Content="📐 识别尺寸"
+                                        ToolTip="自动提取图中的杆件截面尺寸、壁厚与参数表，并与本车模型及规范边界对照"
+                                        Command="{Binding SendImagePresetCommand}"
+                                        CommandParameter="dimensions" />
+                                <Button Margin="0,0,6,2"
+                                        Style="{StaticResource VisionPresetPillButtonStyle}"
+                                        Content="📊 解读云图"
+                                        ToolTip="自动提取 ANSYS 应力/变形云图最大数值并结合 Q355B 与国标限值校核"
+                                        Command="{Binding SendImagePresetCommand}"
+                                        CommandParameter="contour" />
+                                <Button Margin="0,0,6,2"
+                                        Style="{StaticResource VisionPresetPillButtonStyle}"
+                                        Content="🔧 排查报错"
+                                        ToolTip="识别 SolidWorks / ANSYS APDL 报错弹窗并给出分步排查方案"
+                                        Command="{Binding SendImagePresetCommand}"
+                                        CommandParameter="error" />
+                                <Button Margin="0,0,6,2"
+                                        Style="{StaticResource VisionPresetPillButtonStyle}"
+                                        Content="📘 规范对照"
+                                        ToolTip="识别规范条文/表格/节点图并结合已挂载 6 本国标与本车结构核对"
+                                        Command="{Binding SendImagePresetCommand}"
+                                        CommandParameter="standard" />
+                                <TextBlock Margin="4,0,0,0"
+                                           FontSize="11"
+                                           Foreground="#FF94A3B8"
+                                           VerticalAlignment="Center"
+                                           Text="（也可不打字直接按 Enter 自动识图）" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 多行输入文本框（Enter 发送，Shift+Enter 换行，Ctrl+V 可直接粘贴截图） -->
+                    <Grid Grid.Row="1" MinHeight="64" MaxHeight="150">
                         <TextBox x:Name="UserInputTextBox"
                                  Style="{StaticResource BorderlessTextBoxStyle}"
                                  Text="{Binding UserInput, UpdateSourceTrigger=PropertyChanged}"
@@ -1405,7 +2055,7 @@
                                    Foreground="#FF94A3B8"
                                    FontSize="13.5"
                                    IsHitTestVisible="False"
-                                   Text="输入结构咨询、当前尺寸查询、轻量化目标或修改指令（如：现在尺寸是多少？ / 把上弦杆改成 60x60 / 壁厚改成 4）"
+                                   Text="请输入您的设计问题、规范咨询或模型操作指令（支持 Ctrl+V 粘贴截图或拖入图片）…"
                                    TextWrapping="Wrap">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
@@ -1425,13 +2075,13 @@
                     </Grid>
 
                     <!-- 底部精简工具栏 + 发送主按钮 -->
-                    <DockPanel Grid.Row="1" Margin="0,8,0,0">
+                    <DockPanel Grid.Row="2" Margin="0,8,0,0">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Margin="0,0,12,0"
                                        FontSize="11.5"
                                        Foreground="#FF94A3B8"
                                        VerticalAlignment="Center"
-                                       Text="Enter 发送 · Shift+Enter 换行" />
+                                       Text="Enter 发送 · Shift+Enter 换行 · Ctrl+V 贴图" />
                             <Button MinWidth="92"
                                     Height="36"
                                     Style="{StaticResource PrimaryButtonStyle}"
@@ -1440,6 +2090,12 @@
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Height="30"
+                                    Margin="0,0,4,0"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Content="🖼 上传图片"
+                                    ToolTip="{Binding ImageAttachButtonTooltip}"
+                                    Command="{Binding PickImagesCommand}" />
                             <Button Height="30"
                                     Style="{StaticResource GhostButtonStyle}"
                                     Content="重新解析"
@@ -1460,152 +2116,250 @@
                 </Grid>
             </Border>
 
-            <!-- Row 4：高级调试（完整保留全部 4 个页签） -->
-            <Expander Grid.Row="4"
-                      Margin="0,10,0,0"
-                      IsExpanded="{Binding IsAdvancedDebugExpanded, Mode=TwoWay}"
-                      Header="高级调试">
-                <Border Padding="12"
-                        Background="White"
-                        BorderBrush="#FFE2E8F0"
-                        BorderThickness="1"
-                        CornerRadius="0,0,12,12">
+            <!-- Row 4：高级调试控制台（现代统一圆角抽屉，通过输入栏“高级调试”按需展开，彻底移除重复老式 Expander 边框） -->
+            <Border Grid.Row="4"
+                    Margin="0,10,0,0"
+                    Background="White"
+                    BorderBrush="#FFD8E2EC"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Visibility="{Binding IsAdvancedDebugExpanded, Converter={StaticResource BoolToVis}}"
+                    IsVisibleChanged="AdvancedDebugPanel_IsVisibleChanged">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 抽屉顶部现代标题条 -->
+                    <Border Grid.Row="0"
+                            Padding="14,8"
+                            Background="#FFF8FAFC"
+                            BorderBrush="#FFE2E8F0"
+                            BorderThickness="0,0,0,1"
+                            CornerRadius="12,12,0,0">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Padding="8,3"
+                                    FontSize="11.5"
+                                    Content="收起 ▴"
+                                    ToolTip="收起高级调试控制台"
+                                    Command="{Binding ToggleAdvancedDebugCommand}" />
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Width="20"
+                                        Height="20"
+                                        Margin="0,0,8,0"
+                                        CornerRadius="6"
+                                        Background="#FFE0F2FE"
+                                        BorderBrush="#FFBAE6FD"
+                                        BorderThickness="1">
+                                    <TextBlock Text="&gt;_"
+                                               FontFamily="Consolas"
+                                               FontSize="9.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FF0369A1"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Border>
+                                <TextBlock FontSize="12.5"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF0F172A"
+                                           VerticalAlignment="Center"
+                                           Text="高级调试控制台" />
+                                <Border Margin="10,0,0,0"
+                                        Padding="7,1.5"
+                                        CornerRadius="10"
+                                        Background="#FFF1F5F9"
+                                        BorderBrush="#FFE2E8F0"
+                                        BorderThickness="1"
+                                        VerticalAlignment="Center">
+                                    <TextBlock FontSize="11"
+                                               Foreground="#FF64748B"
+                                               Text="JSON 解析 · 参数字典 · APDL 脚本 · 实时日志" />
+                                </Border>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- 现代分段胶囊页签内容区 -->
                     <TabControl x:Name="AdvancedDebugTabControl"
-                                MinHeight="240">
-                        <TabItem Header="JSON 结果">
-                            <TextBox Text="{Binding JsonOutput, Mode=OneWay}"
-                                     IsReadOnly="True"
-                                     AcceptsReturn="True"
-                                     TextWrapping="Wrap"
-                                     VerticalContentAlignment="Top"
-                                     VerticalScrollBarVisibility="Auto"
-                                     HorizontalScrollBarVisibility="Auto"
-                                     FontFamily="Consolas"
-                                     FontSize="12"
-                                     Padding="10" />
+                                Grid.Row="1"
+                                Margin="12,10,12,12"
+                                Style="{StaticResource DebugTabControlStyle}"
+                                SelectionChanged="AdvancedDebugTabControl_SelectionChanged"
+                                MinHeight="230">
+                        <TabItem Header="JSON 结果" Style="{StaticResource DebugTabItemStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                                    <Button DockPanel.Dock="Right"
+                                            Style="{StaticResource DebugAccentSoftButtonStyle}"
+                                            Content="复制 JSON"
+                                            ToolTip="复制当前结构化解析 JSON 到剪贴板"
+                                            Click="CopyJsonButton_Click" />
+                                    <TextBlock VerticalAlignment="Center"
+                                               FontSize="11.5"
+                                               Foreground="#FF64748B"
+                                               Text="当前轮次大模型响应模式、动作契约与结构化 JSON 诊断输出" />
+                                </DockPanel>
+                                <TextBox Grid.Row="1"
+                                         Style="{StaticResource DebugCodeTextBoxStyle}"
+                                         Text="{Binding JsonOutput, Mode=OneWay}"
+                                         TextWrapping="Wrap" />
+                            </Grid>
                         </TabItem>
-                        <TabItem Header="参数表">
-                            <DataGrid ItemsSource="{Binding Parameters}"
-                                      AutoGenerateColumns="False"
-                                      IsReadOnly="True"
-                                      CanUserAddRows="False"
-                                      HeadersVisibility="Column"
-                                      GridLinesVisibility="Horizontal">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="参数名" Binding="{Binding Name}" Width="2*" />
-                                    <DataGridTextColumn Header="显示名" Binding="{Binding DisplayName}" Width="2*" />
-                                    <DataGridTextColumn Header="数值" Binding="{Binding Value}" Width="*" />
-                                    <DataGridTextColumn Header="单位" Binding="{Binding Unit}" Width="*" />
-                                    <DataGridTextColumn Header="映射状态" Binding="{Binding MappingStatus}" Width="1.4*" />
-                                    <DataGridTextColumn Header="说明" Binding="{Binding Description}" Width="3*" />
-                                </DataGrid.Columns>
-                            </DataGrid>
+
+                        <TabItem Header="参数表" Style="{StaticResource DebugTabItemStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0"
+                                           Margin="0,0,0,8"
+                                           FontSize="11.5"
+                                           Foreground="#FF64748B"
+                                           Text="本车可编辑参数字典、当前数值快照与 SolidWorks 尺寸映射状态" />
+                                <DataGrid Grid.Row="1"
+                                          Style="{StaticResource DebugDataGridStyle}"
+                                          ItemsSource="{Binding Parameters}"
+                                          AutoGenerateColumns="False"
+                                          IsReadOnly="True"
+                                          CanUserAddRows="False"
+                                          HeadersVisibility="Column"
+                                          GridLinesVisibility="Horizontal">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="参数名" Binding="{Binding Name}" Width="1.8*" />
+                                        <DataGridTextColumn Header="显示名" Binding="{Binding DisplayName}" Width="1.8*" />
+                                        <DataGridTextColumn Header="数值" Binding="{Binding Value}" Width="*" />
+                                        <DataGridTextColumn Header="单位" Binding="{Binding Unit}" Width="0.8*" />
+                                        <DataGridTextColumn Header="映射状态" Binding="{Binding MappingStatus}" Width="1.4*" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Description}" Width="3*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
                         </TabItem>
-                        <TabItem Header="APDL 预览">
-                            <DockPanel>
-                                <StackPanel DockPanel.Dock="Top"
-                                            Orientation="Horizontal"
-                                            Margin="12">
-                                    <Button Width="160"
-                                            Height="32"
-                                            Content="生成 APDL 调试文件"
-                                            Command="{Binding GenerateApdlCommand}" />
-                                    <Button Width="140"
-                                            Height="32"
-                                            Margin="10,0,0,0"
-                                            Content="打开输出文件"
-                                            Command="{Binding OpenApdlOutputFileCommand}" />
-                                </StackPanel>
-                                <TextBlock DockPanel.Dock="Top"
-                                           Margin="12,0,12,8"
-                                           Text="{Binding ApdlOutputPath}" />
-                                <TextBox Margin="12"
+
+                        <TabItem Header="APDL 预览" Style="{StaticResource DebugTabItemStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="True">
+                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button Style="{StaticResource DebugAccentSoftButtonStyle}"
+                                                Content="生成 APDL 调试文件"
+                                                Command="{Binding GenerateApdlCommand}" />
+                                        <Button Margin="8,0,0,0"
+                                                Style="{StaticResource DebugCompactButtonStyle}"
+                                                Content="打开输出文件"
+                                                Command="{Binding OpenApdlOutputFileCommand}" />
+                                    </StackPanel>
+                                    <Border Margin="12,0,0,0"
+                                            Padding="8,3"
+                                            CornerRadius="6"
+                                            Background="#FFF8FAFC"
+                                            BorderBrush="#FFE2E8F0"
+                                            BorderThickness="1"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Right">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ApdlOutputPath}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Foreground="#FF475569"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding ApdlOutputPath}"
+                                                   Text="{Binding ApdlOutputPath}" />
+                                    </Border>
+                                </DockPanel>
+                                <TextBox Grid.Row="1"
+                                         Style="{StaticResource DebugCodeTextBoxStyle}"
                                          Text="{Binding ApdlPreviewContent, Mode=OneWay}"
-                                         IsReadOnly="True"
-                                         AcceptsReturn="True"
-                                         TextWrapping="NoWrap"
-                                         VerticalContentAlignment="Top"
-                                         VerticalScrollBarVisibility="Auto"
-                                         HorizontalScrollBarVisibility="Auto"
-                                         FontFamily="Consolas"
-                                         FontSize="12"
-                                         Padding="10" />
-                            </DockPanel>
+                                         TextWrapping="NoWrap" />
+                            </Grid>
                         </TabItem>
-                        <TabItem Header="日志输出">
-                            <Grid Margin="12">
+
+                        <TabItem x:Name="LogOutputTabItem" Header="日志输出" Style="{StaticResource DebugTabItemStyle}">
+                            <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
 
-                                <DockPanel Grid.Row="0"
-                                           Margin="0,0,0,10"
-                                           LastChildFill="True">
-                                    <StackPanel DockPanel.Dock="Left"
-                                                Orientation="Horizontal"
-                                                VerticalAlignment="Center">
+                                <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="True">
+                                    <Border DockPanel.Dock="Right"
+                                            Margin="10,0,0,0"
+                                            Padding="8,3"
+                                            CornerRadius="10"
+                                            Background="#FFF8FAFC"
+                                            BorderBrush="#FFE2E8F0"
+                                            BorderThickness="1"
+                                            VerticalAlignment="Center">
+                                        <TextBlock FontSize="11"
+                                                   Foreground="#FF64748B"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxWidth="320"
+                                                   ToolTip="{Binding CurrentLogScopeSummary}"
+                                                   Text="{Binding CurrentLogScopeSummary}" />
+                                    </Border>
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <CheckBox x:Name="LogAutoScrollCheckBox"
-                                                  Margin="0,0,16,0"
+                                                  Margin="0,2,12,2"
                                                   VerticalAlignment="Center"
+                                                  FontSize="12"
                                                   IsChecked="{Binding IsLogAutoScrollEnabled, Mode=TwoWay}"
                                                   Checked="LogAutoScrollCheckBox_Checked"
-                                                  Content="自动滚动到底部" />
-                                        <Button Width="100"
-                                                Height="30"
-                                                Margin="0,0,8,0"
-                                                Content="滚动到底部"
+                                                  Content="自动滚底" />
+                                        <Button Margin="0,2,6,2"
+                                                Style="{StaticResource DebugCompactButtonStyle}"
+                                                Content="滚到底部"
                                                 Click="ScrollLogToBottomButton_Click" />
-                                        <Button Width="92"
-                                                Height="30"
-                                                Margin="0,0,8,0"
+                                        <Button Margin="0,2,6,2"
+                                                Style="{StaticResource DebugCompactButtonStyle}"
                                                 Content="清空显示"
                                                 Command="{Binding ClearLogsCommand}" />
-                                        <Button Width="108"
-                                                Height="30"
-                                                Margin="0,0,8,0"
-                                                Content="复制当前日志"
+                                        <Button Margin="0,2,6,2"
+                                                Style="{StaticResource DebugCompactButtonStyle}"
+                                                Content="复制日志"
                                                 Command="{Binding CopyCurrentLogsCommand}" />
-                                        <Button Width="116"
-                                                Height="30"
-                                                Margin="0,0,8,0"
+                                        <Button Margin="0,2,6,2"
+                                                Style="{StaticResource DebugCompactButtonStyle}"
                                                 Content="测试 LLM 连接"
                                                 Command="{Binding TestLlmConnectionCommand}" />
-                                        <Button Width="92"
-                                                Height="30"
-                                                Margin="0,0,12,0"
-                                                Content="导出日志"
+                                        <Button Margin="0,2,0,2"
+                                                Style="{StaticResource DebugAccentSoftButtonStyle}"
+                                                Content="导出日志 (.txt)"
                                                 ToolTip="弹出保存对话框导出当前对话的 .txt 日志，并同步复制到剪贴板"
                                                 Command="{Binding ExportLogsCommand}" />
-                                    </StackPanel>
-                                    <TextBlock VerticalAlignment="Center"
-                                               HorizontalAlignment="Right"
-                                               FontSize="11.5"
-                                               Foreground="#64748B"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding CurrentLogScopeSummary}"
-                                               Text="{Binding CurrentLogScopeSummary}" />
+                                    </WrapPanel>
                                 </DockPanel>
 
                                 <TextBox x:Name="LogTextBox"
                                          Grid.Row="1"
+                                         Style="{StaticResource DebugCodeTextBoxStyle}"
                                          Text="{Binding Logs, Mode=OneWay}"
-                                         IsReadOnly="True"
-                                         AcceptsReturn="True"
                                          AcceptsTab="True"
                                          TextWrapping="NoWrap"
-                                         VerticalContentAlignment="Top"
-                                         VerticalScrollBarVisibility="Auto"
-                                         HorizontalScrollBarVisibility="Auto"
-                                         FontFamily="Consolas"
-                                         FontSize="12"
-                                         Padding="10"
+                                         IsVisibleChanged="LogTextBox_IsVisibleChanged"
                                          TextChanged="LogTextBox_TextChanged" />
                             </Grid>
                         </TabItem>
                     </TabControl>
-                </Border>
-            </Expander>
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>

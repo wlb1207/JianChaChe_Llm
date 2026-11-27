@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using LlmWpfPrototype.Models;
 using LlmWpfPrototype.Services;
+using LlmWpfPrototype.Services.Chat;
 using LlmWpfPrototype.Services.Project;
 using LlmWpfPrototype.ViewModels;
 
@@ -85,8 +86,19 @@ public partial class MainWindow : Window
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (!string.Equals(e.PropertyName, nameof(MainViewModel.IsProjectSidebarVisible), StringComparison.Ordinal) ||
-            _viewModel is null)
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        if (string.Equals(e.PropertyName, nameof(MainViewModel.ShowWelcomeDashboard), StringComparison.Ordinal) &&
+            _viewModel.ShowWelcomeDashboard)
+        {
+            RequestScrollChatToTop();
+            return;
+        }
+
+        if (!string.Equals(e.PropertyName, nameof(MainViewModel.IsProjectSidebarVisible), StringComparison.Ordinal))
         {
             return;
         }
@@ -113,6 +125,15 @@ public partial class MainWindow : Window
 
     private void UserInputTextBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && e.Key == Key.V)
+        {
+            if (TryPasteImageFromClipboard())
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key != Key.Enter)
         {
             return;
@@ -128,6 +149,92 @@ public partial class MainWindow : Window
         {
             _viewModel.PrimaryActionCommand.Execute(null);
         }
+    }
+
+    private bool TryPasteImageFromClipboard()
+    {
+        if (_viewModel is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            // Prefer native lossless PNG clipboard stream when modern snipping tools provide one.
+            if (System.Windows.Clipboard.ContainsData("PNG") &&
+                System.Windows.Clipboard.GetData("PNG") is Stream pngStream &&
+                pngStream.Length > 0)
+            {
+                using (pngStream)
+                {
+                    if (_viewModel.TryAddClipboardImageStream(pngStream))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (System.Windows.Clipboard.ContainsImage())
+            {
+                var bitmap = System.Windows.Clipboard.GetImage();
+                if (bitmap is not null)
+                {
+                    _viewModel.TryAddClipboardImage(bitmap);
+                    return true;
+                }
+            }
+
+            if (System.Windows.Clipboard.ContainsFileDropList())
+            {
+                var dropped = System.Windows.Clipboard.GetFileDropList();
+                var imagePaths = dropped
+                    .Cast<string?>()
+                    .Where(ChatImageAttachmentService.IsSupportedImageFile)
+                    .Cast<string>()
+                    .ToArray();
+                if (imagePaths.Length > 0)
+                {
+                    _viewModel.TryAddImageFiles(imagePaths);
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private void Composer_PreviewDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop) &&
+            e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files &&
+            files.Any(ChatImageAttachmentService.IsSupportedImageFile))
+        {
+            e.Effects = System.Windows.DragDropEffects.Copy;
+            e.Handled = true;
+        }
+    }
+
+    private void Composer_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (_viewModel is null ||
+            !e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop) ||
+            e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files)
+        {
+            return;
+        }
+
+        var imageFiles = files.Where(ChatImageAttachmentService.IsSupportedImageFile).ToArray();
+        if (imageFiles.Length == 0)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _viewModel.TryAddImageFiles(imageFiles);
+        UserInputTextBox.Focus();
     }
 
     private void ProjectMetaTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -340,8 +447,28 @@ public partial class MainWindow : Window
         }, DispatcherPriority.Render);
     }
 
+    private void RequestScrollChatToTop()
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (ChatScrollViewer.IsLoaded && _viewModel?.ShowWelcomeDashboard == true)
+            {
+                ChatScrollViewer.ScrollToTop();
+            }
+        }, DispatcherPriority.Render);
+    }
+
     private void ScrollChatToBottom(bool force)
     {
+        if (_viewModel?.ShowWelcomeDashboard == true)
+        {
+            if (ChatScrollViewer.IsLoaded)
+            {
+                ChatScrollViewer.ScrollToTop();
+            }
+            return;
+        }
+
         if (!force && !_isChatNearBottom)
         {
             return;
@@ -360,6 +487,52 @@ public partial class MainWindow : Window
     private void LogTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         RequestScrollLogToBottom(force: false);
+    }
+
+    private void LogTextBox_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true)
+        {
+            RequestScrollLogToBottom(force: false);
+        }
+    }
+
+    private void AdvancedDebugPanel_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true && ReferenceEquals(AdvancedDebugTabControl.SelectedItem, LogOutputTabItem))
+        {
+            RequestScrollLogToBottom(force: false);
+        }
+    }
+
+    private async void CopyJsonButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button ||
+            _viewModel is null ||
+            string.IsNullOrWhiteSpace(_viewModel.JsonOutput))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(_viewModel.JsonOutput);
+            button.Content = "已复制 ✓";
+            await Task.Delay(1400);
+            button.Content = "复制 JSON";
+        }
+        catch
+        {
+        }
+    }
+
+    private void AdvancedDebugTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.OriginalSource == AdvancedDebugTabControl &&
+            ReferenceEquals(AdvancedDebugTabControl.SelectedItem, LogOutputTabItem))
+        {
+            RequestScrollLogToBottom(force: false);
+        }
     }
 
     private void ScrollLogToBottomButton_Click(object sender, RoutedEventArgs e)
@@ -382,8 +555,14 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (!LogTextBox.IsVisible)
+            {
+                return;
+            }
+
+            LogTextBox.CaretIndex = LogTextBox.Text.Length;
             LogTextBox.ScrollToEnd();
-        }, DispatcherPriority.Background);
+        }, DispatcherPriority.Loaded);
     }
 
     private void UpdateAdvancedDebugTabHeight()

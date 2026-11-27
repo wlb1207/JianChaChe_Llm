@@ -35,19 +35,78 @@ public sealed class LocalKnowledgeSearchService
 
     public string BuildKnowledgeBaseCatalogSummary()
     {
-        if (!_loader.TryLoadAllKnowledgeDocuments(out _, out var packs, out _, out _) || packs.Count == 0)
+        if (!_loader.TryLoadAllKnowledgeDocuments(out var allDocs, out var packs, out _, out _) || packs.Count == 0)
         {
             return "未检测到可用的本地工程规范知识库。";
         }
+
+        var figureCountsByPack = allDocs
+            .GroupBy(d => d.PackId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.SelectMany(d => LocalChatEvidence.ExtractFigures(d.Markdown, d.Standard, string.Empty))
+                    .Select(f => f.RelativeAssetPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count(),
+                StringComparer.OrdinalIgnoreCase);
 
         var parts = packs.Select(pack =>
         {
             var countLabel = pack.LooseMarkdownCount > 0
                 ? $"{pack.RuleCount} 项规则 + {pack.LooseMarkdownCount} 份扩展文档"
                 : $"{pack.RuleCount} 项规则";
-            return $"{pack.Standard}《{pack.Name}》（{countLabel}）";
+            var figCount = figureCountsByPack.TryGetValue(pack.PackId, out var c) ? c : 0;
+            var figSuffix = figCount > 0 ? $"，含 {figCount} 张高清规范图" : string.Empty;
+            return $"{pack.Standard}《{pack.Name}》（{countLabel}{figSuffix}）";
         });
-        return string.Join("；", parts);
+
+        var totalFigures = DiscoverAllEmbeddedFigures().Count;
+        var summary = string.Join("；", parts);
+        return totalFigures > 0
+            ? $"{summary}；全库共内置 {totalFigures} 张高清矢量工程图（含本车 JC-GD-NG 联动断面图，可直接对话展示或在「规范图库」中浏览放大）。"
+            : summary;
+    }
+
+    public IReadOnlyList<LocalKnowledgeFigureItem> DiscoverAllEmbeddedFigures()
+    {
+        var results = new List<LocalKnowledgeFigureItem>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var kbRoot = _loader.ResolveKnowledgeBaseRootPath();
+
+        // 1) Vehicle linkage diagram first if present
+        const string vehicleRel = "JC_GD_NG/assets/fig_jc_gd_ng_chord_linkage.png";
+        var vehicleFull = Path.Combine(kbRoot, vehicleRel.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(vehicleFull) && seenPaths.Add(vehicleRel))
+        {
+            results.Add(new LocalKnowledgeFigureItem(
+                "本车 JC-GD-NG 主桁架弦杆截面与横向红管补偿联动断面图",
+                vehicleRel,
+                "本车 JC-GD-NG",
+                string.Empty));
+        }
+
+        // 2) All figures embedded in loaded verified knowledge documents
+        if (_loader.TryLoadAllKnowledgeDocuments(out var allDocs, out _, out _, out _))
+        {
+            foreach (var doc in allDocs)
+            {
+                if (!doc.MarkdownLoaded || string.IsNullOrWhiteSpace(doc.Markdown))
+                {
+                    continue;
+                }
+
+                foreach (var fig in LocalChatEvidence.ExtractFigures(doc.Markdown, doc.Standard, string.Empty))
+                {
+                    var fullPath = Path.Combine(kbRoot, fig.RelativeAssetPath.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(fullPath) && seenPaths.Add(fig.RelativeAssetPath))
+                    {
+                        results.Add(fig);
+                    }
+                }
+            }
+        }
+
+        return results;
     }
 
     public LocalKnowledgeSearchResponse Search(string question)
@@ -69,6 +128,7 @@ public sealed class LocalKnowledgeSearchService
 
                 evidenceVocabulary.AddRange(allDocs.SelectMany(d => d.Rule.Keywords));
                 evidenceVocabulary.AddRange(allDocs.Select(d => d.Standard).Where(s => !string.IsNullOrWhiteSpace(s)));
+                evidenceVocabulary.AddRange(allDocs.Select(d => KeywordRagService.NormalizeStandardBaseName(d.StandardName)).Where(s => !string.IsNullOrWhiteSpace(s)));
                 evidenceVocabulary.AddRange(allDocs.Select(d => d.Rule.Topic).Where(s => !string.IsNullOrWhiteSpace(s)));
 
                 var packDetails = string.Join("、", packs.Select(p =>

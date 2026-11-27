@@ -237,15 +237,47 @@ public sealed partial class SolidWorksService
     {
         if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)))
             TryGetRunningApplication(out _);
-        var document = _swApp?.ActiveDoc as IModelDoc2;
+
+        if (_swApp is null)
+        {
+            var runningCount = GetSolidWorksProcessCountSafe();
+            if (runningCount > 0)
+            {
+                var hr = Volatile.Read(ref _lastAttachHResult);
+                throw new InvalidOperationException(
+                    $"{BuildComUnavailableDiagnosticMessage(runningCount, hr)}请先关闭旧 SolidWorks 窗口后发送“打开当前模型”重新打开。");
+            }
+
+            throw new InvalidOperationException("当前尚未启动或连接到 SolidWorks，请先发送“打开当前模型”。");
+        }
+
+        var document = _swApp.ActiveDoc as IModelDoc2;
+        if (!_requireIsolatedSession &&
+            (document is not IAssemblyDoc || !IsWorkingAssemblyPath(document.GetPathName(), expectedPath)))
+        {
+            if (TryReactivateOpenWorkingAssembly(expectedPath, out var reactivated) && reactivated is not null)
+            {
+                document = reactivated;
+            }
+        }
+
         if (document is not IAssemblyDoc)
-            throw new InvalidOperationException("当前 SolidWorks 会话没有活动的工作总装配，请先切回工作总装配。");
+        {
+            var activeTitle = document?.GetTitle();
+            var reason = string.IsNullOrWhiteSpace(activeTitle)
+                ? "当前 SolidWorks 会话没有打开活动的工作总装配"
+                : $"当前 SolidWorks 激活窗口为“{activeTitle}”，而非本项目工作总装配";
+            throw new InvalidOperationException($"{reason}，请先切回工作总装配或发送“打开当前模型”。");
+        }
+
         var path = document.GetPathName();
-        if (string.IsNullOrWhiteSpace(_workingModelFolder) || string.IsNullOrWhiteSpace(path) ||
-            !WorkspaceSafetyPolicy.Within(path, _workingModelFolder) ||
-            (!string.IsNullOrWhiteSpace(_initialModelFolder) && WorkspaceSafetyPolicy.Within(path, _initialModelFolder)) ||
-            (expectedPath is not null && !string.Equals(NormalizeFilePath(path), expectedPath, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException("当前活动装配已变化或不属于工作副本，已停止尺寸修改。");
+        if (!IsWorkingAssemblyPath(path, expectedPath))
+        {
+            var actualName = string.IsNullOrWhiteSpace(path) ? document.GetTitle() : Path.GetFileName(path);
+            throw new InvalidOperationException(
+                $"当前活动装配（{actualName}）已变化或不属于当前项目工作副本目录，已停止尺寸修改。请发送“打开当前模型”切换至本项目工作副本。");
+        }
+
         WorkspaceSafetyPolicy.RejectLinks(path);
         return document;
     }
@@ -322,7 +354,13 @@ public sealed partial class SolidWorksService
         {
             if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)))
                 TryGetRunningApplication(out _);
-            if (_swApp?.ActiveDoc is not IModelDoc2 activeDoc || activeDoc is not IAssemblyDoc)
+            var activeDoc = _swApp?.ActiveDoc as IModelDoc2;
+            if (activeDoc is not IAssemblyDoc || !IsWorkingAssemblyPath(activeDoc.GetPathName(), expectedPath: null))
+            {
+                activeDoc = _swApp is not null ? FindOpenWorkingAssemblyInSession(_swApp, expectedPath: null) : null;
+            }
+
+            if (activeDoc is not IAssemblyDoc)
                 return false;
             var activePath = activeDoc.GetPathName();
             if (string.IsNullOrWhiteSpace(_workingModelFolder) ||
@@ -651,7 +689,13 @@ public sealed partial class SolidWorksService
         {
             if (!_requireIsolatedSession && (_swApp is null || !IsApplicationAlive(_swApp)))
                 TryGetRunningApplication(out _);
-            if (_swApp?.ActiveDoc is not IModelDoc2 assembly || assembly is not IAssemblyDoc)
+            var assembly = _swApp?.ActiveDoc as IModelDoc2;
+            if (assembly is not IAssemblyDoc || !IsWorkingAssemblyPath(assembly.GetPathName(), expectedPath: null))
+            {
+                assembly = _swApp is not null ? FindOpenWorkingAssemblyInSession(_swApp, expectedPath: null) : null;
+            }
+
+            if (assembly is not IAssemblyDoc)
                 return Task.FromResult(measured);
 
             var activePath = assembly.GetPathName();

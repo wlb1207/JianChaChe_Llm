@@ -15,10 +15,20 @@ public static class LocalKnowledgeEvidenceSelector
     private static readonly (string From,string To)[] Synonyms =
         { ("允许应力","许用应力"), ("容许应力","许用应力"), ("安全因子","安全系数"), ("刚性","刚度"), ("挠曲","挠度") };
     private static readonly Regex Headings = new(@"(?m)^#{1,6}[ \t]+[^\r\n]+",RegexOptions.CultureInvariant);
+    private static readonly Regex FigureLookupPattern = new(
+        @"规范图|附图|插图|示意图|构造图|节点图|断面图|详图|图集|图样|图示|矢量图|配图|哪些图|什么图|看看图|看图|图\s*\d",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex EmbeddedFigureLine = new(
+        @"(?m)^[ \t]*!\[[^\]\r\n]{1,180}\]\([A-Za-z0-9_-]+/assets/[A-Za-z0-9_]+\.png\)[ \t]*\r?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public static bool IsFigureLookupQuery(string? question) =>
+        !string.IsNullOrWhiteSpace(question) && FigureLookupPattern.IsMatch(question);
+
     // Start/Length are document coordinates. BodyStart keeps paragraph ranges
     // aligned with the original text after the Markdown heading.
     private sealed record Block(int Start,int Length,string Heading,string Path,string Body,int BodyStart);
-    private sealed record Choice(int Start,int Length,string Heading,int Coverage,bool Notice,bool HeadingMatch,bool Scope);
+    private sealed record Choice(int Start,int Length,string Heading,int Coverage,bool Notice,bool HeadingMatch,bool Scope,bool HasFigure=false);
     public static string Normalize(string text)
     {
         foreach(var (from,to) in Synonyms) text=text.Replace(from,to,StringComparison.OrdinalIgnoreCase);
@@ -62,10 +72,16 @@ public static class LocalKnowledgeEvidenceSelector
     public static IReadOnlyList<LocalEvidenceSelection> Select(string question,IReadOnlyList<LocalKnowledgeHit> hits,int limit)
     {
         var output=new List<LocalEvidenceSelection>();
+        var isFigureQuery=IsFigureLookupQuery(question);
         foreach(var hit in hits)
         {
             var terms=hit.EvidenceTerms;
             if(terms.Count==0) continue;
+            var hitMatchesAnyTerm=terms.Any(t=>
+                Normalize(hit.FullText).Contains(t,StringComparison.OrdinalIgnoreCase)
+                || Normalize(hit.Standard).Contains(t,StringComparison.OrdinalIgnoreCase)
+                || Normalize(hit.Title).Contains(t,StringComparison.OrdinalIgnoreCase)
+                || Normalize(hit.MatchedKeywords).Contains(t,StringComparison.OrdinalIgnoreCase));
             var blocks=Sections(hit.FullText);
             var choices=new List<Choice>();var seen=new HashSet<string>(StringComparer.Ordinal);
             foreach(var b in blocks)
@@ -78,14 +94,25 @@ public static class LocalKnowledgeEvidenceSelector
                 var normalized=Normalize(body);
                 var coverage=terms.Count(t=>normalized.Contains(t,StringComparison.OrdinalIgnoreCase));
                 var headingMatch=terms.Any(t=>Normalize(b.Heading).Contains(t,StringComparison.OrdinalIgnoreCase));
-                var contextualFormula=headingMatch && (body.Contains(@"\[") || body.Contains("$$") || body.Contains(@"\leq") || body.Contains('≤') || body.Contains('≥') || body.Contains("\n|"));
-                if(coverage==0 && !contextualFormula) continue;
+                var blockHasFigure=EmbeddedFigureLine.IsMatch(body);
+                var contextualFormula=headingMatch && (body.Contains(@"\[") || body.Contains("$$") || body.Contains(@"\leq") || body.Contains('≤') || body.Contains('≥') || body.Contains("\n|") || body.Contains("\n!["));
+                var figureSectionMatch=isFigureQuery && hitMatchesAnyTerm && blockHasFigure;
+                if(coverage==0 && !contextualFormula && !figureSectionMatch) continue;
                 // A directly matched subsection may travel whole; a broad parent section contributes
                 // only matching paragraphs/bullets and their formula/definition/table continuations.
-                if(headingMatch && b.Length<=limit)
+                if((headingMatch || figureSectionMatch) && b.Length<=limit)
                 {
-                    choices.Add(new(b.Start,b.Length,b.Path,coverage,Notice(b.Heading),true,false));
+                    choices.Add(new(b.Start,b.Length,b.Path,Math.Max(coverage,figureSectionMatch?1:0),Notice(b.Heading),headingMatch||figureSectionMatch,false,blockHasFigure));
                     continue;
+                }
+                if(figureSectionMatch && b.Length>limit)
+                {
+                    foreach(Match figMatch in EmbeddedFigureLine.Matches(body))
+                    {
+                        var absStart=b.BodyStart+figMatch.Index;
+                        if(figMatch.Length<=limit)
+                            choices.Add(new(absStart,figMatch.Length,b.Path,1,false,true,false,true));
+                    }
                 }
                 var units=Regex.Matches(body,@"(?s)\S.*?(?=\r?\n[ \t]*\r?\n|\z)").Cast<Match>().ToList();
                 foreach(var unit in units)
@@ -99,7 +126,7 @@ public static class LocalKnowledgeEvidenceSelector
                             if(!terms.Any(t=>Normalize(line.Value).Contains(t,StringComparison.OrdinalIgnoreCase))) continue;
                             var absolute=b.BodyStart+unit.Index+line.Index;
                             choices.Add(new(absolute,line.Length,b.Path,
-                                terms.Count(t=>Normalize(line.Value).Contains(t,StringComparison.OrdinalIgnoreCase)),Notice(b.Heading),false,false));
+                                terms.Count(t=>Normalize(line.Value).Contains(t,StringComparison.OrdinalIgnoreCase)),Notice(b.Heading),false,false,EmbeddedFigureLine.IsMatch(line.Value)));
                         }
                         continue;
                     }
@@ -107,30 +134,30 @@ public static class LocalKnowledgeEvidenceSelector
                     var unitIndex=units.IndexOf(unit);var last=unitIndex;
                     while(last+1<units.Count
                         && units[last+1].Index+units[last+1].Length-unit.Index<=limit
-                        && Regex.IsMatch(units[last+1].Value,@"^(?:[\-•|>]|注[\d：:]|参数说明|其中|式中|条件|适用|常用|基本|\\\[|\$\$)|\\frac|\\leq|\\geq|[≤≥]|sqrt\("))
+                        && Regex.IsMatch(units[last+1].Value,@"^(?:[\-•|>]|!\[|注[\d：:]|参数说明|其中|式中|条件|适用|常用|基本|\\\[|\$\$)|\\frac|\\leq|\\geq|[≤≥]|sqrt\("))
                         last++;
                     var lastUnit=units[last];var absoluteStart=b.BodyStart+unit.Index;
                     var length=lastUnit.Index+lastUnit.Length-unit.Index;
                     if(length<=limit) choices.Add(new(absoluteStart,length,b.Path,
                         terms.Count(t=>Normalize(hit.FullText.Substring(absoluteStart,length)).Contains(t,StringComparison.OrdinalIgnoreCase)),
-                        Notice(b.Heading),false,false));
+                        Notice(b.Heading),false,false,EmbeddedFigureLine.IsMatch(hit.FullText.Substring(absoluteStart,length))));
                 }
             }
             if(choices.Count==0) continue;
             // Keep applicable scope with direct evidence, not as an independent object-word match.
             foreach(var b in blocks.Where(b=>Regex.IsMatch(b.Heading,"适用范围|适用条件")))
                 if(b.Length<=limit && !choices.Any(x=>x.Start==b.Start))
-                    choices.Add(new(b.Start,b.Length,b.Path,0,true,false,true));
+                    choices.Add(new(b.Start,b.Length,b.Path,0,true,false,true,EmbeddedFigureLine.IsMatch(b.Body)));
             choices = choices.Where(c => seen.Add(Regex.Replace(
                 hit.FullText.Substring(c.Start, c.Length), @"\s+", " ").Trim())).ToList();
             var selected=new List<Choice>();var used=0;var coveredTerms=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach(var c in choices.OrderByDescending(x=>x.Scope).ThenByDescending(x=>x.Notice)
+            foreach(var c in choices.OrderByDescending(x=>isFigureQuery && x.HasFigure).ThenByDescending(x=>x.Scope).ThenByDescending(x=>x.Notice)
                 .ThenByDescending(x=>x.Coverage).ThenByDescending(x=>x.HeadingMatch).ThenBy(x=>x.Start))
             {
                 var candidateText=Normalize(hit.FullText.Substring(c.Start,c.Length));
                 var newlyCovered=terms.Where(t=>candidateText.Contains(t,StringComparison.OrdinalIgnoreCase)
                     && !coveredTerms.Contains(t)).ToArray();
-                if(!c.Scope && newlyCovered.Length==0 && !c.Notice) continue;
+                if(!c.Scope && !(isFigureQuery && c.HasFigure) && newlyCovered.Length==0 && !c.Notice) continue;
                 if(selected.Any(x=>c.Start<x.Start+x.Length && x.Start<c.Start+c.Length)) continue;
                 var separator=selected.Count==0?0:2;
                 if(used+c.Length+separator>limit) continue;

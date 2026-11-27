@@ -318,7 +318,10 @@ public sealed class CommandDispatcher
                 return true;
             }
 
-            assistantMessages.Add("打开工作模型失败，请检查 SolidWorks、工作区模型文件和许可证状态。");
+            var failureDetail = _solidWorksService.GetLastOpenFailureMessage();
+            assistantMessages.Add(string.IsNullOrWhiteSpace(failureDetail)
+                ? "打开工作模型失败，请查看高级调试日志并确认 SolidWorks 窗口无阻塞弹窗。"
+                : failureDetail);
             return false;
         }
         catch (Exception ex)
@@ -2731,7 +2734,7 @@ public sealed class CommandDispatcher
     {
         var match = System.Text.RegularExpressions.Regex.Match(
             normalizedPath,
-            @"妗佹灦\d+.*$",
+            @"桁架\d+.*$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
         return match.Success

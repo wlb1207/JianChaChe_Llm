@@ -34,16 +34,65 @@ public sealed partial class MainViewModel
 
     private bool IsConfiguredAnsysLauncherAvailable()
     {
-        var path = _simulationOptions.LauncherPath;
-        return Path.IsPathFullyQualified(path) &&
-               File.Exists(path) &&
-               string.Equals(Path.GetFileName(path), "launcher.exe", StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(ResolveEffectiveAnsysLauncherPath());
     }
 
     private bool IsConfiguredAnsysSolverAvailable()
     {
-        var path = _simulationOptions.SolverPath;
-        return Path.IsPathFullyQualified(path) && File.Exists(path);
+        return !string.IsNullOrWhiteSpace(ResolveEffectiveAnsysSolverPath());
+    }
+
+    private string ResolveEffectiveAnsysLauncherPath()
+    {
+        var configured = _simulationOptions.LauncherPath;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            // If explicitly configured (including unit tests injecting fake paths), honor it strictly when valid.
+            if (Path.IsPathFullyQualified(configured) &&
+                File.Exists(configured) &&
+                string.Equals(Path.GetFileName(configured), "launcher.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return configured;
+            }
+
+            // If explicitly set to an invalid/non-launcher path during tests, do NOT auto-substitute another PC binary
+            // unless it looks like an old machine's missing launcher.exe.
+            if (!string.Equals(Path.GetFileName(configured), "launcher.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+        }
+
+        var detected = AnsysInstallationDetector.DetectBestInstallation();
+        if (detected is not null && !string.IsNullOrWhiteSpace(detected.LauncherPath))
+        {
+            _simulationOptions.LauncherPath = detected.LauncherPath;
+            if (string.IsNullOrWhiteSpace(_simulationOptions.SolverPath) && !string.IsNullOrWhiteSpace(detected.SolverPath))
+            {
+                _simulationOptions.SolverPath = detected.SolverPath;
+            }
+            return detected.LauncherPath;
+        }
+
+        return string.Empty;
+    }
+
+    private string ResolveEffectiveAnsysSolverPath()
+    {
+        var configured = _simulationOptions.SolverPath;
+        if (Path.IsPathFullyQualified(configured) && File.Exists(configured))
+        {
+            return configured;
+        }
+
+        var detected = AnsysInstallationDetector.DetectBestInstallation();
+        if (detected is not null && !string.IsNullOrWhiteSpace(detected.SolverPath))
+        {
+            _simulationOptions.SolverPath = detected.SolverPath;
+            return detected.SolverPath;
+        }
+
+        return string.Empty;
     }
 
     private bool IsConfiguredLightweightStudyAvailable()
@@ -175,19 +224,40 @@ public sealed partial class MainViewModel
 
     private bool StartConfiguredAnsysLauncher(out string assistantReply)
     {
-        var path = _simulationOptions.LauncherPath;
-        if (!IsConfiguredAnsysLauncherAvailable())
+        var path = ResolveEffectiveAnsysLauncherPath();
+        if (string.IsNullOrWhiteSpace(path) && System.Windows.Application.Current?.MainWindow is { } owner)
+        {
+            var picker = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "未自动检测到本机 ANSYS APDL，请定位 launcher.exe（仅需选择一次）",
+                Filter = "ANSYS APDL 启动器 (launcher.exe)|launcher.exe|可执行文件 (*.exe)|*.exe"
+            };
+            if (picker.ShowDialog(owner) == true &&
+                File.Exists(picker.FileName) &&
+                string.Equals(Path.GetFileName(picker.FileName), "launcher.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                path = picker.FileName;
+                _simulationOptions.LauncherPath = path;
+                AnsysInstallationDetector.SaveUserPickedLauncherPath(path);
+                AppendLog($"[APDL] 用户已手动定位本机 ANSYS 启动器并缓存：{path}");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
         {
             AppendLog("[APDL] LauncherValidationFailed=True");
-            assistantReply = "未找到 ANSYS 启动器。请检查程序配置中的 Simulation.LauncherPath。";
+            assistantReply = "未在本机自动检测到 ANSYS APDL 安装目录（支持 ANSYS 18.0 ~ 2025 R1+）。请确认本机已安装 ANSYS Mechanical APDL。";
             AddAssistantMessage(assistantReply);
             return false;
         }
 
         _startAnsysLauncher(path);
-        assistantReply = "ANSYS APDL 启动器已启动。你可以在启动器中选择运行方式。";
+        var versionTag = AnsysInstallationDetector.ExtractVersionTagFromPath(path);
+        assistantReply = versionTag != "auto"
+            ? $"已自动识别本机 ANSYS APDL（{versionTag}），启动器已启动。您可以在启动器中选择运行方式。"
+            : "ANSYS APDL 启动器已启动。您可以在启动器中选择运行方式。";
         AddAssistantMessage(assistantReply);
-        AppendLog("[APDL] LauncherProcessStarted=True");
+        AppendLog($"[APDL] LauncherProcessStarted=True; Version={versionTag}");
         return true;
     }
 

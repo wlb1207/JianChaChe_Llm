@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "approval": "User-confirmed multi-standard engineering knowledge base (GB/T 3811-2008, JT/T 1430-2022, GB 50017-2017)",
+  "approval": "User-confirmed multi-standard engineering knowledge base (GB/T 3811-2008, JT/T 1430-2022, GB 50017-2017, GB/T 6728-2025, GB/T 1591-2018, GB 50661-2011)",
   "endpoint": "https://api.kgnas.top/v1/chat/completions",
   "documents": [
     {
@@ -26,7 +26,7 @@
     },
     {
       "file": "verified/04_fatigue_check.md",
-      "sha256": "2130305CDCDE93D8E08F673C439B3A51DBCB8E51EB589B3C1C687AFFDDE40308",
+      "sha256": "366CB1149BD3169DE247F436D1EA632B10E7ABCDBF9BE9B527E4C6083B4207F6",
       "chunkId": "verified-rule-0004",
       "clause": "5.8, 表31, 表32, 表33, 附录O, 表O.1, 表O.2",
       "standard": "GB/T 3811-2008"
@@ -103,14 +103,14 @@
     },
     {
       "file": "verified/15_wheel_rail_and_mechanical_parts.md",
-      "sha256": "BA16F624F236F4C8976964560759CA28BDAF70E422578B643C11933B5B06A516",
+      "sha256": "D3B9A071E2D11D9C4EDC70E2C1FF526822D038A8411A03D1B2CB6CD0A4B09842",
       "chunkId": "verified-rule-0015",
       "clause": "6.1.2.7, 6.2.1-6.2.4, 6.3.4, 表21, 表42, 表46-表49, 式97-式99, 式130-式133",
       "standard": "GB/T 3811-2008"
     },
     {
       "file": "verified/16_structural_safety_clearance_and_guardrails.md",
-      "sha256": "41BC98A3DD1DDE90F74F4F1B2F791A43D37F3BD03EB3261AD0CBC1528DA1FDAB",
+      "sha256": "80ADB935952CE65EAA98BE169A5952E415E31F763DABDF4D0BAF62DA97BB5469",
       "chunkId": "verified-rule-0016",
       "clause": "9.2.2, 9.3.2, 9.3.3, 9.3.4, 表56, 式146",
       "standard": "GB/T 3811-2008"
@@ -124,7 +124,7 @@
     },
     {
       "file": "GB_50017_2017/verified/02_section_width_thickness_class.md",
-      "sha256": "1857B9B4FEFEDE2351015B5CE555F4B2ECC875FAC2630E3C53C5D66BCEDA121B",
+      "sha256": "A8A5C9164B6416F1E59FC0603E352E8E2FD41FA0766EB47F4AE92EA3004FCC0F",
       "chunkId": "gb_50017_2017-rule-0002",
       "clause": "3.5, 表3.5.1, 表3.5.2, 7.3.1, 7.3.4",
       "standard": "GB 50017-2017"
@@ -145,7 +145,7 @@
     },
     {
       "file": "GB_50017_2017/verified/05_axial_members_and_slenderness.md",
-      "sha256": "67E1AA28968D7BE445814B7E9BE0D9D1E48B838DE32E7582B50BD3B982F0D6A0",
+      "sha256": "976F3DCEBBBD485E109D7B20A33746BAB20DF7CDE32579C52CD0F17B2829BFA4",
       "chunkId": "gb_50017_2017-rule-0005",
       "clause": "7.1, 7.2, 7.3, 7.4, 表7.2.1-1, 表7.4.1-2, 表7.4.6, 表7.4.7",
       "standard": "GB 50017-2017"
@@ -173,7 +173,7 @@
     },
     {
       "file": "GB_50017_2017/verified/09_hollow_section_tube_joints.md",
-      "sha256": "E0EC84ABA7E7BDE77FAEAA9304394FC7184ADFE2A19845933D464F6A60FBF195",
+      "sha256": "CEF4B596286BA7121BC9DC2AAA93DB2FA5D5A34D275A8496206DEB2A1C4D7C35",
       "chunkId": "gb_50017_2017-rule-0009",
       "clause": "13.1, 13.2, 13.4, 表13.4.1",
       "standard": "GB 50017-2017"
@@ -186,6 +186,83 @@
       "standard": "GB 50017-2017"
     },
     {
+      "file": "GB_50661_2011/verified/01_weld_quality_grades_and_designations.md",
+      "sha256": "EC584F29A1B5F7A2671E7C1EF1A11116B34ED07C2AD82127699B71A98B51F061",
+      "chunkId": "gb_50661_2011-rule-0001",
+      "clause": "5.1.1-5.1.5, 5.2.1-5.2.2, 表5.2.1-1至表5.2.1-5, 图5.2.1",
+      "standard": "GB 50661-2011"
+    },
+    {
+      "file": "GB_50661_2011/verified/02_weld_effective_throat_calculation.md",
+      "sha256": "CE9566DB9C27FC39EBE314256979B8DFCD524B37DA546A87AA025EE34C38E867",
+      "chunkId": "gb_50661_2011-rule-0002",
+      "clause": "5.3.1, 5.3.2, 5.3.3, 5.3.4, 表5.3.2, 表5.3.4, 图5.3.1至图5.3.4",
+      "standard": "GB 50661-2011"
+    },
+    {
+      "file": "GB_50661_2011/verified/03_hollow_section_tube_joint_welds.md",
+      "sha256": "207A20904FD406C2F8444B422D573DF37D49FF8A8DDAF7BC337DE66BF7A67B85",
+      "chunkId": "gb_50661_2011-rule-0003",
+      "clause": "5.3.6, 续表5.3.6-1, 表5.3.6-2, 图5.3.6-1, 图5.3.6-3, 图5.3.6-5",
+      "standard": "GB 50661-2011"
+    },
+    {
+      "file": "GB_50661_2011/verified/04_fillet_size_lap_transition_and_inspection.md",
+      "sha256": "879217CD8EDFF1F8AC96ECFCEEB6BD966C7436E4D26D1E8DFFB4E22A51B2132B",
+      "chunkId": "gb_50661_2011-rule-0004",
+      "clause": "5.4.2-5.4.4, 8.1.1-8.1.9, 8.2.1, 表5.4.2, 表5.4.4, 表8.2.1, 图5.4.3, 图5.4.4",
+      "standard": "GB 50661-2011"
+    },
+    {
+      "file": "GB_T_1591_2018/verified/01_grade_designation_and_chemical_composition.md",
+      "sha256": "0D6FC6F83CAE6490D4E78409A04D1BAA93216F9242B95434F57DE2DE126253C7",
+      "chunkId": "gb_t_1591_2018-rule-0001",
+      "clause": "前言, 3.1-3.4, 4.1-4.2, 7.1, 7.3, 表1, 表2, 表3, 表4, 表5, 表6, 附录A",
+      "standard": "GB/T 1591-2018"
+    },
+    {
+      "file": "GB_T_1591_2018/verified/02_mechanical_properties_tensile_and_bending.md",
+      "sha256": "5E70E98C691C268B4739A963C7E8C6B0A59B8858CA0CCDDC64CC13237178A1D9",
+      "chunkId": "gb_t_1591_2018-rule-0002",
+      "clause": "7.4.1, 7.4.3, 表7, 表8, 表9, 表10, 表12",
+      "standard": "GB/T 1591-2018"
+    },
+    {
+      "file": "GB_T_1591_2018/verified/03_impact_toughness_surface_and_inspection.md",
+      "sha256": "2A9B220887CD0B8B2325E786CD7E6A390DF64EE3CDD845EAB199CEE477DB904E",
+      "chunkId": "gb_t_1591_2018-rule-0003",
+      "clause": "7.4.2, 7.5, 7.6, 8.1-8.3, 9.2-9.5, 表11, 表13",
+      "standard": "GB/T 1591-2018"
+    },
+    {
+      "file": "GB_T_6728_2025/verified/01_square_hollow_sections.md",
+      "sha256": "B4CE60F237203E1ACF74245FE2A177C4B110F66FCB96A567F46DB4FE3AC7E3DD",
+      "chunkId": "gb_t_6728_2025-rule-0001",
+      "clause": "5.1, 6.1.1.1, 表1",
+      "standard": "GB/T 6728-2025"
+    },
+    {
+      "file": "GB_T_6728_2025/verified/02_rectangular_hollow_sections.md",
+      "sha256": "232C528C8E31DF37495907D1B3879FFE05E034CEE942F959238B98BC7D5AD1E9",
+      "chunkId": "gb_t_6728_2025-rule-0002",
+      "clause": "5.1, 6.1.1.2, 表2",
+      "standard": "GB/T 6728-2025"
+    },
+    {
+      "file": "GB_T_6728_2025/verified/03_tolerances_corner_radius_and_formulas.md",
+      "sha256": "537890E96F91CCE24365F2F698270128F60D8C6BD227291A141CC24505359619",
+      "chunkId": "gb_t_6728_2025-rule-0003",
+      "clause": "6.1.1.4-6.1.1.9, 6.2.1, 6.3.1, 6.4, 表4, 表5, 表21, 表23, 附录A(表A.2), 附录B(表B.1)",
+      "standard": "GB/T 6728-2025"
+    },
+    {
+      "file": "GB_T_6728_2025/verified/04_material_mechanical_and_weld_quality.md",
+      "sha256": "14EE57790F4A0CF52D31F044CD7D1F243932E93694B34619F4EE136086D47F66",
+      "chunkId": "gb_t_6728_2025-rule-0004",
+      "clause": "1, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11, 7.3, 8.2, 表25, 表26",
+      "standard": "GB/T 6728-2025"
+    },
+    {
       "file": "JT_T_1430_2022/verified/01_classification_dimensions.md",
       "sha256": "AC34F8E8356825784E74B983C3979EE3D3B923D5D325DC00EF3BA81E62735EA4",
       "chunkId": "jt_t_1430_2022-rule-0001",
@@ -194,7 +271,7 @@
     },
     {
       "file": "JT_T_1430_2022/verified/02_deflection_and_load_capacity.md",
-      "sha256": "C96719D3189914E37628239DCEFE54288C9065A27FDA31656284B1F49D109027",
+      "sha256": "0732207E9A0BB4E7639788B3D58B6425E44482683F76300F5AC48547F5FADE29",
       "chunkId": "jt_t_1430_2022-rule-0002",
       "clause": "5.1.1, 5.1.2, 5.1.3, 5.1.4, 表3",
       "standard": "JT/T 1430-2022"
@@ -222,7 +299,7 @@
     },
     {
       "file": "JT_T_1430_2022/verified/06_test_methods_and_wind_test.md",
-      "sha256": "2D73819698CCECC242EFA4E2D44BC6B59E020292EB0DA7410692E1AD654F7280",
+      "sha256": "F977437C4042549A923A44877740458A4AF2CF69F7F572EED4C4EEFE803FE4A1",
       "chunkId": "jt_t_1430_2022-rule-0006",
       "clause": "7, 附录A, 附录B",
       "standard": "JT/T 1430-2022"

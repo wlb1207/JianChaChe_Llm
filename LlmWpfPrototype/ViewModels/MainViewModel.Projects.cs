@@ -117,7 +117,7 @@ public sealed partial class MainViewModel
     private bool _suppressDraftPersistence;
     private readonly HashSet<string> _collapsedProjectIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _isProbingLlmConnection;
-    private string _llmStatusTooltip = "点击检测或重新连接大模型服务";
+    private string _llmStatusTooltip = "点击检测或重新连接 ChatGPT 服务";
     private int _llmStatusGeneration;
 
     public ObservableCollection<DesignProjectItemViewModel> FilteredProjects { get; } = [];
@@ -173,6 +173,7 @@ public sealed partial class MainViewModel
     public AsyncRelayCommand<DesignConversationItemViewModel> DeleteConversationCommand { get; private set; } = null!;
 
     public RelayCommand<DesignProjectItemViewModel> ExportProjectReportCommand { get; private set; } = null!;
+    public RelayCommand<DesignProjectItemViewModel> ExportProjectWordReportCommand { get; private set; } = null!;
 
     public AsyncRelayCommand OpenCurrentProjectModelCommand { get; private set; } = null!;
 
@@ -283,12 +284,6 @@ public sealed partial class MainViewModel
 
     public string CurrentLowerTrussHud => $"下桁架：{(ActiveProject?.LowerTruss ?? MemberSectionSpecRecord.CreateBaseline("lower_truss", "下桁架")).HudDisplayText}";
 
-    public bool IsAssistantBusy => _isLocalKnowledgeBusy || _isGeneratingModel || _primaryActionCommand.IsExecuting;
-
-    public string BusyBannerText => _isLocalKnowledgeBusy
-        ? ChatStatus
-        : (string.IsNullOrWhiteSpace(StatusMessage) ? "正在处理，请稍候..." : StatusMessage);
-
     public bool HasPendingCadConfirmation => _pendingBusinessPlan is not null && !IsAssistantBusy;
 
     public string PendingCadConfirmationSummary => _pendingBusinessPlan is null
@@ -341,7 +336,7 @@ public sealed partial class MainViewModel
 
         _isProbingLlmConnection = true;
         ReconnectLlmCommand?.RaiseCanExecuteChanged();
-        SetLlmRuntimeStatus("连接中...", isStartupProbe ? "启动自检：正在连接大模型服务..." : "正在重新连接大模型服务...");
+        SetLlmRuntimeStatus("连接中...", isStartupProbe ? "启动自检：正在连接 ChatGPT 服务..." : "正在重新连接 ChatGPT 服务...");
         var probeStartGeneration = _llmStatusGeneration;
 
         try
@@ -359,7 +354,7 @@ public sealed partial class MainViewModel
             if (result.Succeeded)
             {
                 var latency = result.ElapsedMilliseconds.HasValue ? $"延迟 {result.ElapsedMilliseconds.Value} ms" : "已就绪";
-                SetLlmRuntimeStatus("在线", $"模型服务已连接（{latency}），点击可重新检测");
+                SetLlmRuntimeStatus("在线", $"ChatGPT 服务已连接（{latency}），点击可重新检测");
                 if (isStartupProbe)
                 {
                     AppendGlobalDiagnosticLogOnly($"[LLM Probe] 启动探测成功：{latency}");
@@ -411,6 +406,11 @@ public sealed partial class MainViewModel
     private void NotifyUiBusyAndConfirmationChanged()
     {
         OnPropertyChanged(nameof(IsAssistantBusy));
+        OnPropertyChanged(nameof(IsCurrentConversationBusy));
+        OnPropertyChanged(nameof(IsCadExclusiveOperationRunning));
+        OnPropertyChanged(nameof(IsChatBusy));
+        OnPropertyChanged(nameof(CanCancelActiveTask));
+        OnPropertyChanged(nameof(CanSwitchProjectOrConversation));
         OnPropertyChanged(nameof(BusyBannerText));
         OnPropertyChanged(nameof(HasPendingCadConfirmation));
         OnPropertyChanged(nameof(PendingCadConfirmationSummary));
@@ -427,13 +427,22 @@ public sealed partial class MainViewModel
         _cancelChatCommand?.RaiseCanExecuteChanged();
         CancelPendingBusinessCommand?.RaiseCanExecuteChanged();
         SendQuickPromptCommand?.RaiseCanExecuteChanged();
+        PickImagesCommand?.RaiseCanExecuteChanged();
+        ClearPendingImagesCommand?.RaiseCanExecuteChanged();
+        SendImagePresetCommand?.RaiseCanExecuteChanged();
         ReconnectLlmCommand?.RaiseCanExecuteChanged();
         CreateProjectCommand?.RaiseCanExecuteChanged();
         CreateNewConversationCommand?.RaiseCanExecuteChanged();
+        CreateConversationInProjectCommand?.RaiseCanExecuteChanged();
+        SelectProjectCommand?.RaiseCanExecuteChanged();
+        SelectConversationCommand?.RaiseCanExecuteChanged();
+        DeleteProjectCommand?.RaiseCanExecuteChanged();
+        DeleteConversationCommand?.RaiseCanExecuteChanged();
         ForkProjectCommand?.RaiseCanExecuteChanged();
         OpenCurrentProjectModelCommand?.RaiseCanExecuteChanged();
         OpenProjectModelCommand?.RaiseCanExecuteChanged();
         SyncLiveDimensionsCommand?.RaiseCanExecuteChanged();
+        RollbackToVersionCommand?.RaiseCanExecuteChanged();
     }
 
     public string CurrentProjectWorkspaceSummary
@@ -513,6 +522,7 @@ public sealed partial class MainViewModel
         SendQuickPromptCommand = new AsyncRelayCommand<string>(async prompt =>
         {
             if (string.IsNullOrWhiteSpace(prompt) || IsAssistantBusy) return;
+            IsChatBriefingExpanded = false;
             UserInput = prompt;
             await PrimaryActionCommand.ExecuteAsync();
         }, _ => !IsAssistantBusy);
@@ -527,18 +537,18 @@ public sealed partial class MainViewModel
             RebuildProjectSidebarItems();
         });
 
-        CreateProjectCommand = new AsyncRelayCommand(CreateAndSwitchProjectAsync, () => !_isGeneratingModel && !_isLocalKnowledgeBusy);
-        ForkProjectCommand = new AsyncRelayCommand<DesignProjectItemViewModel>(ForkAndSwitchProjectAsync, _ => !_isGeneratingModel && !_isLocalKnowledgeBusy);
-        CreateNewConversationCommand = new AsyncRelayCommand(() => CreateAndSwitchConversationAsync(ActiveProject?.Id), () => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+        CreateProjectCommand = new AsyncRelayCommand(CreateAndSwitchProjectAsync, () => CanSwitchProjectOrConversation);
+        ForkProjectCommand = new AsyncRelayCommand<DesignProjectItemViewModel>(ForkAndSwitchProjectAsync, _ => CanSwitchProjectOrConversation);
+        CreateNewConversationCommand = new AsyncRelayCommand(() => CreateAndSwitchConversationAsync(ActiveProject?.Id), () => CanSwitchProjectOrConversation);
         CreateConversationInProjectCommand = new AsyncRelayCommand<DesignProjectItemViewModel>(
             item => CreateAndSwitchConversationAsync(item?.Id ?? ActiveProject?.Id),
-            _ => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+            _ => CanSwitchProjectOrConversation);
         SelectProjectCommand = new AsyncRelayCommand<DesignProjectItemViewModel>(
             item => item is null ? Task.CompletedTask : SwitchToProjectAsync(item.Id),
-            _ => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+            _ => CanSwitchProjectOrConversation);
         SelectConversationCommand = new AsyncRelayCommand<DesignConversationItemViewModel>(
             item => item is null ? Task.CompletedTask : SwitchToConversationAsync(item.ProjectId, item.Id),
-            _ => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+            _ => CanSwitchProjectOrConversation);
 
         BeginEditProjectMetaCommand = new RelayCommand<DesignProjectItemViewModel>(item =>
         {
@@ -618,7 +628,7 @@ public sealed partial class MainViewModel
                 }
                 StatusMessage = $"已移除项目：{target.Name}";
             }
-        });
+        }, _ => CanSwitchProjectOrConversation);
 
         DeleteConversationCommand = new AsyncRelayCommand<DesignConversationItemViewModel>(async item =>
         {
@@ -634,7 +644,7 @@ public sealed partial class MainViewModel
             {
                 RebuildProjectSidebarItems();
             }
-        });
+        }, _ => CanSwitchProjectOrConversation);
 
         ExportProjectReportCommand = new RelayCommand<DesignProjectItemViewModel>(item =>
         {
@@ -647,7 +657,18 @@ public sealed partial class MainViewModel
             PersistActiveConversationSnapshot();
         });
 
-        OpenCurrentProjectModelCommand = new AsyncRelayCommand(OpenCurrentProjectModelFromUiAsync, () => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+        ExportProjectWordReportCommand = new RelayCommand<DesignProjectItemViewModel>(item =>
+        {
+            var target = item?.Record ?? ActiveProject;
+            if (target is null) return;
+            var path = _projectStore.ExportProjectWordReport(target.Id, AppPaths.ReportsDirectory);
+            AppendLog($"[Project] 已导出图文 Word 计算书：{path}");
+            StatusMessage = $"已导出图文 Word 计算书：{Path.GetFileName(path)}（位于 reports 目录）";
+            AddAssistantMessage($"已生成项目《{target.Name}》图文 Word 设计计算书：`{Path.GetFileName(path)}`（含双口径力学对比、6 规范边界核对清单、高清矢量结构附图与版本演进时间线，保存在 `reports` 文件夹）。");
+            PersistActiveConversationSnapshot();
+        });
+
+        OpenCurrentProjectModelCommand = new AsyncRelayCommand(OpenCurrentProjectModelFromUiAsync, () => CanSwitchProjectOrConversation);
         OpenProjectModelCommand = new AsyncRelayCommand<DesignProjectItemViewModel>(async item =>
         {
             if (item is not null && !string.Equals(item.Id, ActiveProject?.Id, StringComparison.OrdinalIgnoreCase))
@@ -655,10 +676,10 @@ public sealed partial class MainViewModel
                 await SwitchToProjectAsync(item.Id);
             }
             await OpenCurrentProjectModelFromUiAsync();
-        }, _ => !_isGeneratingModel && !_isLocalKnowledgeBusy);
-        SyncLiveDimensionsCommand = new AsyncRelayCommand(SyncLiveDimensionsFromUiAsync, () => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+        }, _ => CanSwitchProjectOrConversation);
+        SyncLiveDimensionsCommand = new AsyncRelayCommand(SyncLiveDimensionsFromUiAsync, () => CanSwitchProjectOrConversation);
         ToggleVersionPanelCommand = new RelayCommand(() => IsVersionPanelExpanded = !IsVersionPanelExpanded);
-        RollbackToVersionCommand = new AsyncRelayCommand<DesignVersionCheckpoint>(QueueVersionRollbackConfirmationAsync, _ => !_isGeneratingModel && !_isLocalKnowledgeBusy);
+        RollbackToVersionCommand = new AsyncRelayCommand<DesignVersionCheckpoint>(QueueVersionRollbackConfirmationAsync, _ => CanSwitchProjectOrConversation);
 
         // Activate initial or last-used project & conversation synchronously (or clean empty state if 0 projects)
         if (ActiveProject is { } initialProject)
@@ -675,6 +696,7 @@ public sealed partial class MainViewModel
     private async Task ActivateEmptyWorkspaceAsync()
     {
         ClearPendingBusinessPlan();
+        ClearPendingImageAttachments();
         ClearPendingModificationContext("empty_project_workspace");
         _pendingResetWorkspaceConfirmation = false;
         _chatRetrievalTopic = null;
@@ -732,6 +754,7 @@ public sealed partial class MainViewModel
         SyncVersionHistoryCollection();
         RefreshProjectHudProperties();
         RebuildProjectSidebarItems();
+        NotifyTaskIsolationStateChanged();
     }
 
     private async Task CreateAndSwitchProjectAsync()
@@ -818,6 +841,7 @@ public sealed partial class MainViewModel
         }
 
         ClearPendingBusinessPlan();
+        ClearPendingImageAttachments();
         ClearPendingModificationContext("project_or_conversation_switch");
         _pendingResetWorkspaceConfirmation = false;
         _chatRetrievalTopic = null;
@@ -843,6 +867,7 @@ public sealed partial class MainViewModel
             ? (project.VersionHistory.LastOrDefault()?.Summary ?? project.VersionBadgeText)
             : string.Empty;
 
+        IsChatBriefingExpanded = false;
         ChatMessages.Clear();
         _memoryStore.RestoreFromPersisted(targetConv.Turns, targetConv.Actions);
 
@@ -855,7 +880,7 @@ public sealed partial class MainViewModel
         }
         else
         {
-            AddAssistantMessage(BuildWelcomeMessage());
+            AddWelcomeAnchorMessage(BuildWelcomeMessage());
             PersistActiveConversationSnapshot();
         }
 
@@ -872,6 +897,7 @@ public sealed partial class MainViewModel
         SyncVersionHistoryCollection();
         RefreshProjectHudProperties();
         RebuildProjectSidebarItems();
+        NotifyTaskIsolationStateChanged();
     }
 
     private void PersistActiveConversationSnapshot(string? latestUserInputForAutoTitle = null)
@@ -921,6 +947,11 @@ public sealed partial class MainViewModel
 
     private async Task OpenCurrentProjectModelFromUiAsync()
     {
+        if (IsCadExclusiveOperationRunning)
+        {
+            return;
+        }
+
         await EnsureActiveProjectForIncomingMessageAsync();
         var parse = new LlmParseResult
         {
@@ -929,9 +960,26 @@ public sealed partial class MainViewModel
         };
         _lastSubmittedInput = "打开当前项目工作模型";
         AddUserMessage("打开当前项目工作模型");
-        await HandleParsedResultAsync(parse, string.Empty, "打开当前项目工作模型", isConfirmedCadPlan: true);
-        RefreshProjectHudProperties();
-        RebuildProjectSidebarItems();
+        PersistActiveConversationSnapshot("打开当前项目工作模型");
+        var task = BeginConversationTask("正在准备工作区并打开 SolidWorks 工作模型（三维操作期间暂不可切换项目）...", isCadExclusive: true);
+        try
+        {
+            await HandleParsedResultAsync(parse, string.Empty, "打开当前项目工作模型", isConfirmedCadPlan: true, task: task);
+        }
+        catch (OperationCanceledException)
+        {
+            const string cancelMsg = "已取消打开 SolidWorks 模型操作。";
+            AppendLogForTask(task, "[SolidWorks] 用户取消打开工作模型。");
+            AddAssistantMessageForTask(task, cancelMsg, roleDisplay: "系统");
+            StatusMessage = cancelMsg;
+            PersistActiveConversationSnapshot();
+        }
+        finally
+        {
+            EndConversationTask(task);
+            RefreshProjectHudProperties();
+            RebuildProjectSidebarItems();
+        }
     }
 
     private async Task SyncLiveDimensionsFromUiAsync()
@@ -988,50 +1036,83 @@ public sealed partial class MainViewModel
         }
 
         var diffSegments = new List<string>();
-        var parameters = new List<LlmParsedParameter>();
-        string? singleSynthesizedCommand = null;
+        var rollbackSteps = new List<(string CommandText, List<LlmParsedParameter> Parameters, string Label)>();
 
         if (!SpecsEqual(active.UpperChord, targetCheckpoint.UpperChord))
         {
             var u = targetCheckpoint.UpperChord;
-            diffSegments.Add($"上弦杆 -> {u.SpecText}");
-            parameters.Add(new LlmParsedParameter { Name = "truss_top_chord_section_width", DisplayName = "上弦杆截面宽度", Value = JsonSerializerHelperToElement(u.WidthMm), Unit = "mm", Target = ["solidworks"] });
-            parameters.Add(new LlmParsedParameter { Name = "truss_top_chord_section_height", DisplayName = "上弦杆截面高度", Value = JsonSerializerHelperToElement(u.HeightMm), Unit = "mm", Target = ["solidworks"] });
-            parameters.Add(new LlmParsedParameter { Name = "truss_top_chord_wall_thickness", DisplayName = "上弦杆壁厚", Value = JsonSerializerHelperToElement(u.ThicknessMm), Unit = "mm", Target = ["solidworks"] });
-            singleSynthesizedCommand ??= $"把桁架上弦杆截面改成 {u.WidthMm:0.##}x{u.HeightMm:0.##}x{u.ThicknessMm:0.##}";
+            var label = $"上弦杆 -> {u.SpecText}";
+            diffSegments.Add(label);
+            var upperParams = new List<LlmParsedParameter>
+            {
+                new() { Name = "truss_top_chord_section_width", DisplayName = "上弦杆截面宽度", Value = JsonSerializerHelperToElement(u.WidthMm), Unit = "mm", Target = ["solidworks"] },
+                new() { Name = "truss_top_chord_section_height", DisplayName = "上弦杆截面高度", Value = JsonSerializerHelperToElement(u.HeightMm), Unit = "mm", Target = ["solidworks"] },
+                new() { Name = "truss_top_chord_wall_thickness", DisplayName = "上弦杆壁厚", Value = JsonSerializerHelperToElement(u.ThicknessMm), Unit = "mm", Target = ["solidworks"] }
+            };
+            rollbackSteps.Add(($"把桁架上弦杆截面改成 {u.WidthMm:0.##}x{u.HeightMm:0.##}x{u.ThicknessMm:0.##}", upperParams, label));
         }
 
-        if (!SpecsEqual(active.LowerChord, targetCheckpoint.LowerChord))
+        var lowerChordChanged = !SpecsEqual(active.LowerChord, targetCheckpoint.LowerChord);
+        if (lowerChordChanged)
         {
             var lc = targetCheckpoint.LowerChord;
-            diffSegments.Add($"下弦杆 -> {lc.SpecText}");
-            parameters.Add(new LlmParsedParameter { Name = "truss_bottom_chord_section_width", DisplayName = "下弦杆截面宽度", Value = JsonSerializerHelperToElement(lc.WidthMm), Unit = "mm", Target = ["solidworks"] });
-            parameters.Add(new LlmParsedParameter { Name = "truss_bottom_chord_section_height", DisplayName = "下弦杆截面高度", Value = JsonSerializerHelperToElement(lc.HeightMm), Unit = "mm", Target = ["solidworks"] });
-            parameters.Add(new LlmParsedParameter { Name = "truss_bottom_chord_wall_thickness", DisplayName = "下弦杆壁厚", Value = JsonSerializerHelperToElement(lc.ThicknessMm), Unit = "mm", Target = ["solidworks"] });
-            singleSynthesizedCommand ??= $"把桁架下弦杆截面改成 {lc.WidthMm:0.##}x{lc.HeightMm:0.##}x{lc.ThicknessMm:0.##}";
+            var label = $"下弦杆 -> {lc.SpecText}";
+            diffSegments.Add(label);
+            var lowerParams = new List<LlmParsedParameter>
+            {
+                new() { Name = "truss_bottom_chord_section_width", DisplayName = "下弦杆截面宽度", Value = JsonSerializerHelperToElement(lc.WidthMm), Unit = "mm", Target = ["solidworks"] },
+                new() { Name = "truss_bottom_chord_section_height", DisplayName = "下弦杆截面高度", Value = JsonSerializerHelperToElement(lc.HeightMm), Unit = "mm", Target = ["solidworks"] },
+                new() { Name = "truss_bottom_chord_wall_thickness", DisplayName = "下弦杆壁厚", Value = JsonSerializerHelperToElement(lc.ThicknessMm), Unit = "mm", Target = ["solidworks"] }
+            };
+            rollbackSteps.Add(($"把桁架下弦杆截面改成 {lc.WidthMm:0.##}x{lc.HeightMm:0.##}x{lc.ThicknessMm:0.##}", lowerParams, label));
         }
-
-        if (!SpecsEqual(active.LowerTruss, targetCheckpoint.LowerTruss))
+        else if (!SpecsEqual(active.LowerTruss, targetCheckpoint.LowerTruss))
         {
             var lt = targetCheckpoint.LowerTruss;
-            diffSegments.Add($"下桁架 -> {lt.SpecText}");
-            singleSynthesizedCommand ??= $"把下桁架改成 {lt.WidthMm:0.##}x{lt.HeightMm:0.##}x{lt.ThicknessMm:0.##}";
+            var label = $"下桁架 -> {lt.SpecText}";
+            diffSegments.Add(label);
+            var ltParams = new List<LlmParsedParameter>
+            {
+                new() { Name = "lower_truss_section_width", DisplayName = "下桁架截面宽度", Value = JsonSerializerHelperToElement(lt.WidthMm), Unit = "mm", Target = ["solidworks"] },
+                new() { Name = "lower_truss_section_height", DisplayName = "下桁架截面高度", Value = JsonSerializerHelperToElement(lt.HeightMm), Unit = "mm", Target = ["solidworks"] },
+                new() { Name = "lower_truss_wall_thickness", DisplayName = "下桁架壁厚", Value = JsonSerializerHelperToElement(lt.ThicknessMm), Unit = "mm", Target = ["solidworks"] }
+            };
+            rollbackSteps.Add(($"把下桁架改成 {lt.WidthMm:0.##}x{lt.HeightMm:0.##}x{lt.ThicknessMm:0.##}", ltParams, label));
         }
 
-        if (diffSegments.Count == 0 || string.IsNullOrWhiteSpace(singleSynthesizedCommand))
+        if (rollbackSteps.Count == 0)
         {
             StatusMessage = $"当前结构参数已与 {targetCheckpoint.VersionTag} 一致，无需回退。";
             return;
         }
 
-        AddUserMessage($"回退至 {targetCheckpoint.VersionTag}（{string.Join("，", diffSegments)}）");
-        _lastSubmittedInput = singleSynthesizedCommand;
-        if (_trussMemberCommandParser.TryParse(singleSynthesizedCommand, out _) &&
-            TryBuildDeterministicRollbackPlan(singleSynthesizedCommand, parameters, out var plan))
+        var builtPlans = new List<QueuedRollbackStep>();
+        foreach (var step in rollbackSteps)
         {
-            BindParameters(plan);
-            QueueBusinessPlanForConfirmation(plan, $"回退至 {targetCheckpoint.VersionTag}");
+            if (_trussMemberCommandParser.TryParse(step.CommandText, out _) &&
+                TryBuildDeterministicRollbackPlan(step.CommandText, step.Parameters, out var stepPlan))
+            {
+                builtPlans.Add(new QueuedRollbackStep(step.CommandText, stepPlan, step.Label));
+            }
         }
+
+        if (builtPlans.Count == 0)
+        {
+            StatusMessage = $"未能为 {targetCheckpoint.VersionTag} 构建可执行的回退计划。";
+            return;
+        }
+
+        AddUserMessage($"回退至 {targetCheckpoint.VersionTag}（{string.Join("，", diffSegments)}）");
+        _pendingFollowUpRollbackSteps.Clear();
+        for (var i = 1; i < builtPlans.Count; i++)
+        {
+            _pendingFollowUpRollbackSteps.Add(builtPlans[i]);
+        }
+
+        var primaryStep = builtPlans[0];
+        _lastSubmittedInput = primaryStep.CommandText;
+        BindParameters(primaryStep.Plan);
+        QueueBusinessPlanForConfirmation(primaryStep.Plan, $"回退至 {targetCheckpoint.VersionTag}");
 
         await Task.CompletedTask;
     }
@@ -1148,6 +1229,7 @@ public sealed partial class MainViewModel
         SyncVersionHistoryCollection();
         RefreshProjectHudProperties();
         RebuildProjectSidebarItems();
+        NotifyTaskIsolationStateChanged();
     }
 
     private string BuildProjectLongTermMemoryPromptBlock()

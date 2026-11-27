@@ -16,6 +16,8 @@ public static class AppPaths
 
     public static string DataDirectory => EnsureDirectory(Path.Combine(UserDataRoot, "data"));
 
+    public static string AttachmentsDirectory => EnsureDirectory(Path.Combine(DataDirectory, "attachments"));
+
     public static string UserConfigDirectory => EnsureDirectory(Path.Combine(UserDataRoot, "Config"));
 
     public static string BundledConfigDirectory => Path.Combine(BaseDirectory, "Config");

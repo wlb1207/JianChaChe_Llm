@@ -226,23 +226,78 @@ public sealed class ApdlBatchRunner
             throw new FileNotFoundException("未找到安装目录中的 Mechanical APDL 引擎。", enginePath);
         RejectReparsePoints(enginePath);
         var engine = FileVersionInfo.GetVersionInfo(enginePath);
-        var release = Regex.Match(engine.FileVersion ?? "", @"^Mechanical APDL Release\s+(\d+)\.(\d+)",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (!release.Success || !(engine.FileDescription ?? "").Contains("Mechanical APDL", StringComparison.OrdinalIgnoreCase))
+        var fileDescription = engine.FileDescription ?? "";
+        if (!fileDescription.Contains("Mechanical APDL", StringComparison.OrdinalIgnoreCase) &&
+            !fileDescription.Contains("ANSYS", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("安装目录中的 ANSYS.exe 无法验证为 Mechanical APDL。");
 
-        // The versioned vendor wrapper loads the installed MPI and GPU support DLLs
-        // before invoking ANSYS.exe. Starting the engine directly bypasses that setup.
-        var wrapperName = $"ANSYS{release.Groups[1].Value}{release.Groups[2].Value}.exe";
-        var wrapperPath = Path.Combine(directory, wrapperName);
+        // Resolve the versioned vendor wrapper across both legacy (18.0 -> ANSYS180.exe)
+        // and modern year-based Ansys releases (2019 R1..2025 R1+ -> ANSYS193/212/232/242/251.exe or MAPDL.exe).
+        var wrapperPath = ResolveVersionedBatchWrapper(directory, engine.FileVersion);
         var configuredName = Path.GetFileName(configuredPath);
-        if (!string.Equals(configuredName, "ANSYS.exe", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(configuredName, wrapperName, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"批量求解须使用该安装目录的 {wrapperName}。");
-        if (!File.Exists(wrapperPath))
-            throw new FileNotFoundException("缺少 Mechanical APDL 的版本化批处理启动程序。", wrapperPath);
-        RejectReparsePoints(wrapperPath);
-        return wrapperPath;
+        if (wrapperPath is not null)
+        {
+            var wrapperName = Path.GetFileName(wrapperPath);
+            if (!string.Equals(configuredName, "ANSYS.exe", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(configuredName, wrapperName, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(configuredName, "mapdl.exe", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"批量求解须使用该安装目录的 {wrapperName}。");
+            RejectReparsePoints(wrapperPath);
+            return wrapperPath;
+        }
+
+        // Newer Ansys releases or slim installs where ANSYS.exe / mapdl.exe runs directly
+        var mapdlPath = Path.Combine(directory, "mapdl.exe");
+        if (File.Exists(mapdlPath))
+        {
+            RejectReparsePoints(mapdlPath);
+            return mapdlPath;
+        }
+
+        return enginePath;
+    }
+
+    internal static string? ResolveVersionedBatchWrapper(string directory, string? fileVersion)
+    {
+        var candidates = new List<string>();
+
+        // Legacy: "Mechanical APDL Release 18.0" -> ANSYS180.exe
+        var legacyMatch = Regex.Match(fileVersion ?? "", @"Release\s+(\d{2})\.(\d)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (legacyMatch.Success)
+        {
+            candidates.Add($"ANSYS{legacyMatch.Groups[1].Value}{legacyMatch.Groups[2].Value}.exe");
+        }
+
+        // Modern: "2023 R2" / "2024 R2" / "2025 R1" -> ANSYS232.exe / ANSYS242.exe / ANSYS251.exe
+        var modernMatch = Regex.Match(fileVersion ?? "", @"20(\d{2})\s*R(\d)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (modernMatch.Success)
+        {
+            candidates.Add($"ANSYS{modernMatch.Groups[1].Value}{modernMatch.Groups[2].Value}.exe");
+        }
+
+        // Directory path version folder fallback (e.g. ...\v180\ANSYS\bin\winx64 -> ANSYS180.exe, ...\v242\... -> ANSYS242.exe)
+        var folderMatch = Regex.Match(directory, @"[\\/]v(\d{3})[\\/]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (folderMatch.Success)
+        {
+            candidates.Add($"ANSYS{folderMatch.Groups[1].Value}.exe");
+        }
+
+        foreach (var name in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var full = Path.Combine(directory, name);
+            if (File.Exists(full)) return full;
+        }
+
+        // Direct directory scan for any ANSYS###.exe wrapper right alongside ANSYS.exe
+        try
+        {
+            return Directory.EnumerateFiles(directory, "ANSYS*.exe", SearchOption.TopDirectoryOnly)
+                .FirstOrDefault(p => Regex.IsMatch(Path.GetFileName(p), @"^ANSYS\d{3}\.exe$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string BindNumericParameters(string template, IReadOnlyDictionary<string, double> bindings)

@@ -7,18 +7,22 @@ namespace LlmWpfPrototype.ViewModels;
 
 public sealed partial class MainViewModel
 {
+    private sealed record QueuedRollbackStep(string CommandText, LlmParseResult Plan, string SummaryLabel);
+
     private LlmParseResult? _pendingBusinessPlan;
     private string _pendingBusinessInput = string.Empty;
     private string _pendingBusinessExecutionInput = string.Empty;
     private string _pendingBusinessParameters = string.Empty;
+    private readonly List<QueuedRollbackStep> _pendingFollowUpRollbackSteps = [];
 
     private void ClearPendingBusinessPlan()
     {
-        if (_pendingBusinessPlan is null) return;
+        if (_pendingBusinessPlan is null && _pendingFollowUpRollbackSteps.Count == 0) return;
         _pendingBusinessPlan = null;
         _pendingBusinessInput = string.Empty;
         _pendingBusinessExecutionInput = string.Empty;
         _pendingBusinessParameters = string.Empty;
+        _pendingFollowUpRollbackSteps.Clear();
         Parameters.Clear();
         MissingItems.Clear();
         DesignStatus = StatusWaitingInput;
@@ -40,8 +44,14 @@ public sealed partial class MainViewModel
                 .ToArray();
             if (memberNames.Length > 0 && !summary.Contains(memberNames[0], StringComparison.Ordinal))
             {
-                return $"{string.Join("、", memberNames)}（{summary}）";
+                summary = $"{string.Join("、", memberNames)}（{summary}）";
             }
+        }
+
+        if (_pendingFollowUpRollbackSteps.Count > 0)
+        {
+            var extras = string.Join("；随后自动执行：", _pendingFollowUpRollbackSteps.Select(s => s.SummaryLabel));
+            summary = $"{summary}；随后自动执行：{extras}";
         }
 
         return summary;
@@ -58,10 +68,20 @@ public sealed partial class MainViewModel
         DesignStatus = StatusPendingConfirmation;
         StatusMessage = "尺寸修改尚未执行，等待确认。";
         var summary = BuildPendingBusinessPlanSummary();
-        var boundaryAdvisory = BuildPendingPlanDesignBoundaryAdvisory();
-        var reply = string.IsNullOrWhiteSpace(boundaryAdvisory)
-            ? $"待确认修改：{summary}。确认后将校验、写入、重建、保存并回读核对。请发送“确认修改”或“取消修改”。"
-            : $"待确认修改：{summary}。\n{boundaryAdvisory}\n确认后将校验、写入、重建、保存并回读核对。请发送“确认修改”或“取消修改”。";
+        var evaluations = EvaluatePendingPlanBoundaries();
+        var deviationNotice = BuildPendingPlanDeviationNotice(evaluations);
+        var boundaryAdvisory = DesignBoundaryEvaluationService.FormatCompactPreConfirmationBlock(evaluations);
+        var replyParts = new List<string> { $"待确认修改：{summary}。" };
+        if (!string.IsNullOrWhiteSpace(deviationNotice))
+        {
+            replyParts.Add(deviationNotice);
+        }
+        if (!string.IsNullOrWhiteSpace(boundaryAdvisory))
+        {
+            replyParts.Add(boundaryAdvisory);
+        }
+        replyParts.Add("确认后将校验、写入、重建、保存并回读核对。请发送“确认修改”或“取消修改”。");
+        var reply = string.Join("\n", replyParts);
         AddAssistantMessage(reply);
         AppendConversationHistory(input, reply);
         AppendLog("[Confirmation] DimensionPlanQueued; Dispatched=False");
@@ -183,13 +203,22 @@ public sealed partial class MainViewModel
     }
 
     private Task ConfirmPendingBusinessAsync() =>
-        CanConfirmBusiness ? ExecuteConfirmedBusinessPlanAsync() : Task.CompletedTask;
+        CanConfirmBusiness ? ExecuteConfirmedBusinessPlanAsync(fromConfirmationButton: true) : Task.CompletedTask;
 
-    private async Task ExecuteConfirmedBusinessPlanAsync()
+    private async Task ExecuteConfirmedBusinessPlanAsync(bool fromConfirmationButton = false)
     {
         var plan = _pendingBusinessPlan!;
         var input = _pendingBusinessInput;
         var executionInput = _pendingBusinessExecutionInput;
+        var planSummary = BuildPendingBusinessPlanSummary();
+        if (fromConfirmationButton)
+        {
+            var buttonMessage = string.IsNullOrWhiteSpace(planSummary)
+                ? "确认执行改模"
+                : $"确认执行改模（{planSummary}）";
+            AddUserMessage(buttonMessage);
+            PersistActiveConversationSnapshot();
+        }
         if (_pendingBusinessParameters != JsonSerializer.Serialize(Parameters))
         {
             ClearPendingBusinessPlan();
@@ -198,30 +227,61 @@ public sealed partial class MainViewModel
             AppendConversationHistory("确认修改", changedReply);
             return;
         }
+        var followUpSteps = _pendingFollowUpRollbackSteps.ToList();
         _pendingBusinessPlan = null;
         _pendingBusinessInput = string.Empty;
         _pendingBusinessExecutionInput = string.Empty;
         _pendingBusinessParameters = string.Empty;
+        _pendingFollowUpRollbackSteps.Clear();
         plan.NeedConfirmation = false;
         _isGeneratingModel = true;
         _lastSubmittedInput = executionInput;
+        var task = BeginConversationTask("正在校验并写入 SolidWorks 杆件尺寸（三维操作期间暂不可切换项目）...", isCadExclusive: true);
         RefreshActionState();
         try
         {
-            AppendLog("[Confirmation] DimensionPlanConfirmed; Dispatching=True");
-            await HandleParsedResultAsync(plan, string.Empty, input, isConfirmedCadPlan: true);
+            AppendLogForTask(task, "[Confirmation] DimensionPlanConfirmed; Dispatching=True");
+            await HandleParsedResultAsync(plan, string.Empty, input, isConfirmedCadPlan: true, task: task);
+
+            if (followUpSteps.Count > 0 && _lastExecutableActionSucceeded)
+            {
+                foreach (var step in followUpSteps)
+                {
+                    task.Cancellation.Token.ThrowIfCancellationRequested();
+                    AppendLogForTask(task, $"[Confirmation] ExecutingFollowUpRollbackStep={step.SummaryLabel}");
+                    var stepPlan = JsonSerializer.Deserialize<LlmParseResult>(JsonSerializer.Serialize(step.Plan))!;
+                    stepPlan.NeedConfirmation = false;
+                    BindParameters(stepPlan);
+                    _lastSubmittedInput = step.CommandText;
+                    await HandleParsedResultAsync(stepPlan, string.Empty, $"{input}（{step.SummaryLabel}）", isConfirmedCadPlan: true, task: task);
+                    if (!_lastExecutableActionSucceeded)
+                    {
+                        AppendLogForTask(task, $"[Confirmation] FollowUpRollbackStepAborted={step.SummaryLabel}");
+                        break;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            DesignStatus = StatusWaitingInput;
+            StatusMessage = "已取消尺寸修改执行。";
+            AppendLogForTask(task, "[Confirmation] DimensionPlanCancelledDuringExecution=True");
+            AddAssistantMessageForTask(task, "已取消等待，当前三维尺寸写入操作已停止。", roleDisplay: "系统");
+            PersistActiveConversationSnapshot();
         }
         catch (Exception ex)
         {
             DesignStatus = StatusFailed;
             StatusMessage = $"模型修改失败：{ex.Message}";
-            AppendLog(StatusMessage, ex);
-            AddAssistantMessage(StatusMessage);
-            AppendConversationHistory("确认修改", StatusMessage);
+            AppendLogForTask(task, StatusMessage, ex);
+            AddAssistantMessageForTask(task, StatusMessage);
+            RecordConversationTurnForTask(task, "确认修改", StatusMessage);
         }
         finally
         {
             _isGeneratingModel = false;
+            EndConversationTask(task);
             RefreshActionState();
         }
     }

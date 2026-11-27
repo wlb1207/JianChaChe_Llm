@@ -353,11 +353,14 @@ public sealed class ModelWorkspaceManager
 
     private void ApplyWorkspaceOptions(SolidWorksWorkspaceOptions options)
     {
-        ModelRootPath = NormalizePath(options.ModelRootPath);
-        InitialModelFolder = NormalizePath(options.InitialModelFolder);
-        DefaultWorkingModelFolder = NormalizePath(options.WorkingModelFolder);
+        var effective = string.IsNullOrWhiteSpace(options.InitialModelFolder) || !Directory.Exists(options.InitialModelFolder)
+            ? WorkspacePathResolver.ResolveWorkspaceOptions(options)
+            : options;
+        ModelRootPath = NormalizePath(effective.ModelRootPath);
+        InitialModelFolder = NormalizePath(effective.InitialModelFolder);
+        DefaultWorkingModelFolder = NormalizePath(effective.WorkingModelFolder);
         WorkingModelFolder = DefaultWorkingModelFolder;
-        AssemblyFileName = NormalizeRelativePath(options.AssemblyFileName);
+        AssemblyFileName = NormalizeRelativePath(effective.AssemblyFileName);
         (_solidWorksService as SolidWorksService)?.SetWorkingModelFolder(WorkingModelFolder);
     }
 
@@ -431,16 +434,42 @@ public sealed class ModelWorkspaceManager
         foreach (var directory in sourceDirectory.GetDirectories("*", SearchOption.AllDirectories))
         {
             var relativePath = Path.GetRelativePath(sourceFolder, directory.FullName);
+            if (ShouldSkipWorkspaceCopyRelativePath(relativePath))
+            {
+                continue;
+            }
+
             Directory.CreateDirectory(Path.Combine(targetFolder, relativePath));
         }
 
         foreach (var file in sourceDirectory.GetFiles("*", SearchOption.AllDirectories))
         {
             var relativePath = Path.GetRelativePath(sourceFolder, file.FullName);
+            if (ShouldSkipWorkspaceCopyRelativePath(relativePath) ||
+                CadReferenceBoundary.IsWorkspaceMetadataFileName(file.Name))
+            {
+                continue;
+            }
+
             var targetFilePath = Path.Combine(targetFolder, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(targetFilePath)!);
             file.CopyTo(targetFilePath, overwrite: true);
         }
+    }
+
+    private static bool ShouldSkipWorkspaceCopyRelativePath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return false;
+        }
+
+        var segments = relativePath.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        return segments.Any(seg =>
+            string.Equals(seg, "初始模型", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(seg, "backup", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string NormalizePath(string path)

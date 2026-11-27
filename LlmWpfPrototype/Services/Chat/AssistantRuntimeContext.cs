@@ -29,16 +29,19 @@ public sealed record AssistantRuntimeContextSnapshot(
     string? ProjectContextBlock = null,
     string? LiveStructureDimensionsBlock = null,
     string? EngineeringKnowledgeGuidanceBlock = null,
-    string? LocalKnowledgeBaseCatalogSummary = null)
+    string? LocalKnowledgeBaseCatalogSummary = null,
+    string? SolidWorksStatusDetail = null)
 {
     public string ToPromptBlock()
     {
         var sb = new StringBuilder();
         sb.AppendLine("【当前程序实时能力与运行状态（事实依据，禁止编造未配置能力或隐瞒已配置能力）】");
 
-        var modelState = IsSolidWorksModelOpened
-            ? $"已打开（文档：{(string.IsNullOrWhiteSpace(ActiveDocumentName) ? "当前活动模型" : ActiveDocumentName)}）"
-            : "尚未打开";
+        var modelState = !string.IsNullOrWhiteSpace(SolidWorksStatusDetail)
+            ? SolidWorksStatusDetail.Trim()
+            : IsSolidWorksModelOpened
+                ? $"已打开（文档：{(string.IsNullOrWhiteSpace(ActiveDocumentName) ? "当前活动模型" : ActiveDocumentName)}）"
+                : "尚未打开";
         sb.AppendLine($"- SolidWorks 模型状态：{modelState}；工作区已初始化：{(IsWorkspaceInitialized ? "是" : "否")}");
 
         if (EditableMemberSummaries.Count > 0)

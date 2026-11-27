@@ -18,8 +18,9 @@ public sealed class DesignBoundaryProfile
 
 public sealed class VehicleModelBaselineProfile
 {
-    public string VehicleName { get; set; } = "单层不可伸缩轨行悬挂式桥梁检查车";
+    public string VehicleName { get; set; } = "不可伸缩单层桥梁检查车";
     public string StandardModelCode { get; set; } = "JC-GD-NG";
+    public string StandardModelDescription { get; set; } = "梁底固定轨道·固定桁架不过墩式（JT/T 1430—2022 分类）";
     public string TopologySummary { get; set; } = "U型对称空间格构桁架（梁底 28b 工字钢固定双轨悬挂、固定桁架不过墩）";
     public decimal TotalSpanMm { get; set; } = 18896m;
     public decimal TotalHeightMm { get; set; } = 8632m;

@@ -6,21 +6,28 @@ public sealed class AsyncRelayCommand : ICommand
 {
     private readonly Func<Task> _execute;
     private readonly Func<bool>? _canExecute;
-    private bool _isExecuting;
+    private readonly bool _allowConcurrentExecution;
+    private int _activeExecutionCount;
 
-    public AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute = null)
+    public AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute = null, bool allowConcurrentExecution = false)
     {
         _execute = execute;
         _canExecute = canExecute;
+        _allowConcurrentExecution = allowConcurrentExecution;
     }
 
     public event EventHandler? CanExecuteChanged;
 
-    public bool IsExecuting => _isExecuting;
+    public bool IsExecuting => Volatile.Read(ref _activeExecutionCount) > 0;
 
     public bool CanExecute(object? parameter)
     {
-        return !_isExecuting && (_canExecute?.Invoke() ?? true);
+        if (!_allowConcurrentExecution && IsExecuting)
+        {
+            return false;
+        }
+
+        return _canExecute?.Invoke() ?? true;
     }
 
     public async void Execute(object? parameter)
@@ -35,7 +42,7 @@ public sealed class AsyncRelayCommand : ICommand
             return;
         }
 
-        _isExecuting = true;
+        Interlocked.Increment(ref _activeExecutionCount);
         RaiseCanExecuteChanged();
 
         try
@@ -44,7 +51,7 @@ public sealed class AsyncRelayCommand : ICommand
         }
         finally
         {
-            _isExecuting = false;
+            Interlocked.Decrement(ref _activeExecutionCount);
             RaiseCanExecuteChanged();
         }
     }

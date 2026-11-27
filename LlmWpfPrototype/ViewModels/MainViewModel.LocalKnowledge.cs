@@ -8,7 +8,6 @@ namespace LlmWpfPrototype.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    private bool _isLocalKnowledgeBusy;
     private CancellationTokenSource? _chatCancellation;
     private string _chatStatus = "工程问题自动结合相关资料；云端生成会发送问题及本轮选中的资料片段。";
     private string? _chatRetrievalTopic;
@@ -25,13 +24,13 @@ public sealed partial class MainViewModel
             }
         }
     }
-    public bool IsChatBusy => _isLocalKnowledgeBusy;
-    public bool CanConfirmBusiness => _pendingBusinessPlan is not null && !_isLocalKnowledgeBusy && !_isGeneratingModel
-        && !_primaryActionCommand.IsExecuting && DesignStatus == StatusPendingConfirmation && Parameters.Any();
+    public bool IsChatBusy => CanCancelActiveTask;
+    public bool CanConfirmBusiness => _pendingBusinessPlan is not null && !IsCurrentConversationBusy && !IsCadExclusiveOperationRunning
+        && DesignStatus == StatusPendingConfirmation && Parameters.Any();
     public AsyncRelayCommand CancelChatCommand => _cancelChatCommand ??= new AsyncRelayCommand(() => {
-        _chatCancellation?.Cancel();
+        CancelActiveTaskForCurrentView();
         return Task.CompletedTask;
-    }, () => _isLocalKnowledgeBusy);
+    }, () => CanCancelActiveTask);
     public AsyncRelayCommand ConfirmBusinessCommand => _confirmBusinessCommand ??= new AsyncRelayCommand(
         ConfirmPendingBusinessAsync, () => CanConfirmBusiness);
 
@@ -67,42 +66,52 @@ public sealed partial class MainViewModel
             previousRetrievalTopic: _chatRetrievalTopic);
     }
 
-    private async Task SendAutomaticChatMessageAsync(string question)
+    private async Task SendAutomaticChatMessageAsync(string question, ActiveConversationTask? existingTask = null)
     {
-        if (_isLocalKnowledgeBusy || _isGeneratingModel) return;
+        if (IsCadExclusiveOperationRunning) return;
         if (question.Length == 0 || question.Length > LocalKnowledgeChatService.MaxQuestionCharacters)
         {
             ChatStatus = "请输入 1 至 2000 字符的问题；未发送请求。";
-            AddAssistantMessage(ChatStatus);
+            AddAssistantMessageForTask(existingTask, ChatStatus);
             return;
         }
-        using var cancellation = new CancellationTokenSource();
+
+        var ownsTask = existingTask is null;
+        var task = existingTask ?? BeginConversationTask("正在理解问题、按需检索多标准规范并生成回答...", isRag: true);
+        task.IsRag = true;
+        var cancellation = task.Cancellation;
         _chatCancellation = cancellation;
-        _isLocalKnowledgeBusy = true;
-        OnPropertyChanged(nameof(IsChatBusy));
-        RefreshActionState();
         var history = _memoryStore.GetKnowledgeHistory();
+        var topicBefore = _chatRetrievalTopic;
         ChatStatus = "正在理解问题、按需检索并请求模型回答；问答不会执行工程操作。";
+        UpdateTaskProgress(task, ChatStatus);
+        NotifyTaskIsolationStateChanged();
         try
         {
             var search = LocalKnowledgeSearchService.CreateForApplication();
             var service = new AutomaticKnowledgeChatService(search.Search, _llmService);
-            var result = await service.AnswerAsync(question, history, cancellation.Token, _chatRetrievalTopic);
+            var result = await service.AnswerAsync(question, history, cancellation.Token, topicBefore);
             cancellation.Token.ThrowIfCancellationRequested();
-            _chatRetrievalTopic = AutomaticKnowledgeChatService.Plan(question, history, _chatRetrievalTopic).Topic ?? _chatRetrievalTopic;
-            ChatMessages.Add(new ChatMessage {
-                RoleDisplay = "AI", Text = result.Answer, IsLocalKnowledgeReply = true,
-                LocalSources = result.Sources, LocalCitationStatus = result.CitationStatus
-            });
-            _memoryStore.RecordKnowledgeTurn(
+            if (IsTaskActiveOnUi(task))
+            {
+                _chatRetrievalTopic = AutomaticKnowledgeChatService.Plan(question, history, topicBefore).Topic ?? _chatRetrievalTopic;
+            }
+            AddAssistantMessageForTask(
+                task,
+                result.Answer,
+                isLocalKnowledge: true,
+                localSources: result.Sources,
+                localCitationStatus: result.CitationStatus);
+            RecordConversationTurnForTask(
+                task,
                 question,
                 result.Answer,
-                result.UserProvenance,
-                result.AnswerProvenance);
-            PersistActiveConversationSnapshot(question);
+                isKnowledgeTurn: true,
+                userProvenance: result.UserProvenance,
+                answerProvenance: result.AnswerProvenance);
             if (result.CitedIds.Count > 0 && result.InvalidIds.Count == 0)
             {
-                SetLlmRuntimeStatus("在线", "模型服务已连接，点击可重新检测");
+                SetLlmRuntimeStatus("在线", "ChatGPT 服务已连接，点击可重新检测");
                 ChatStatus = "回答完成，可展开本轮引用的资料片段。";
             }
             else
@@ -114,18 +123,18 @@ public sealed partial class MainViewModel
         {
             SetLlmRuntimeStatus("异常", $"资料披露校验异常：{ex.Message}");
             ChatStatus = ex.Message;
-            ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
+            AddAssistantMessageForTask(task, ChatStatus, roleDisplay: "系统");
         }
         catch (OperationCanceledException)
         {
             ChatStatus = "已取消等待；未自动重试。不能据此证明远端已停止处理或计费。";
-            ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
+            AddAssistantMessageForTask(task, ChatStatus, roleDisplay: "系统");
         }
         catch (LocalKnowledgeCallException ex)
         {
             SetLlmRuntimeStatus("异常", $"规范问答调用异常：{ex.Message}，点击可重新检测");
             ChatStatus = ex.Message;
-            AddAssistantMessage(ChatStatus);
+            AddAssistantMessageForTask(task, ChatStatus);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("本地资料检索失败", StringComparison.Ordinal)
             || ex.Message.StartsWith("当前为离线 Mock", StringComparison.Ordinal)
@@ -133,22 +142,30 @@ public sealed partial class MainViewModel
         {
             SetLlmRuntimeStatus("异常", ex.Message);
             ChatStatus = ex.Message;
-            ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
+            AddAssistantMessageForTask(task, ChatStatus, roleDisplay: "系统");
         }
         catch
         {
-            SetLlmRuntimeStatus("异常", "模型问答未完成，请检查网络或配置，点击可重新检测");
+            SetLlmRuntimeStatus("异常", "ChatGPT 问答未完成，请检查网络或配置，点击可重新检测");
             ChatStatus = "模型问答未完成，请检查资料或模型服务配置；未自动重试、未回退模板、未执行工程操作。";
-            ChatMessages.Add(new ChatMessage { RoleDisplay = "系统", Text = ChatStatus });
+            AddAssistantMessageForTask(task, ChatStatus, roleDisplay: "系统");
         }
         finally
         {
-            _chatCancellation = null;
-            _isLocalKnowledgeBusy = false;
-            OnPropertyChanged(nameof(IsChatBusy));
-            RefreshActionState();
+            if (ReferenceEquals(_chatCancellation, cancellation))
+            {
+                _chatCancellation = null;
+            }
+            if (ownsTask)
+            {
+                EndConversationTask(task);
+            }
+            else
+            {
+                NotifyTaskIsolationStateChanged();
+            }
         }
     }
 
-    public void CancelPendingChat() => _chatCancellation?.Cancel();
+    public void CancelPendingChat() => CancelActiveTaskForCurrentView();
 }

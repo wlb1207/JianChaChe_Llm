@@ -196,7 +196,7 @@ def main() -> None:
                 pass
         policy = {
             "schemaVersion": 2,
-            "approval": "User-confirmed multi-standard engineering knowledge base (GB/T 3811-2008, JT/T 1430-2022, GB 50017-2017)",
+            "approval": "User-confirmed multi-standard engineering knowledge base (GB/T 3811-2008, JT/T 1430-2022, GB 50017-2017, GB/T 6728-2025, GB/T 1591-2018, GB 50661-2011)",
             "endpoint": endpoint,
             "documents": approved_entries,
         }

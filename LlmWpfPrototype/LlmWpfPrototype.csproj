@@ -50,6 +50,9 @@
     <None Update="KnowledgeBase\**\*.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="KnowledgeBase\**\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="Data\rag_index.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -3,8 +3,9 @@
   "profileName": "不伸缩单层轨行悬挂式桥梁检查车—多规范绑定设计边界配置",
   "description": "本配置将 SolidWorks 检查车实体模型基准与 GB/T 3811-2008、JT/T 1430-2022、GB 50017-2017 三本已核验规范的核心结构边界绑定，供主设计顾问与改模前预检引擎直接读取；支持后续按新车型或企业标准扩展修改。",
   "vehicle": {
-    "vehicleName": "单层不可伸缩轨行悬挂式桥梁检查车",
+    "vehicleName": "不可伸缩单层桥梁检查车",
     "standardModelCode": "JC-GD-NG",
+    "standardModelDescription": "梁底固定轨道·固定桁架不过墩式（JT/T 1430—2022 分类）",
     "topologySummary": "U型对称空间格构桁架（梁底 28b 工字钢固定双轨悬挂、固定桁架不过墩）",
     "totalSpanMm": 18896,
     "totalHeightMm": 8632,

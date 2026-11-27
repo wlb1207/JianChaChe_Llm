@@ -28,7 +28,7 @@ public sealed class KnowledgeHistoryProvenance
 
 public static class KnowledgeDisclosureGuard
 {
-    private const string PolicyHash = "8BB909E35725219189776FC6D73233FAE85F267A37BE58E925492A55D2D77E4D";
+    private const string PolicyHash = "52D141C95B9AEE2E7B9928EC6BEE6317858AA404B587A459EEA5E102259D122F";
     private static string PolicyPath => Path.Combine(AppContext.BaseDirectory, "DisclosurePolicy", "approved-sources.json");
     private static string KnowledgeRoot => Path.Combine(AppContext.BaseDirectory, "KnowledgeBase");
     private sealed record EvidenceProof(string File, string FullText, string SentText, LocalChatSourceRange[] Ranges, string Clause, string ChunkId);
@@ -48,6 +48,29 @@ public static class KnowledgeDisclosureGuard
         return name.StartsWith("verified/", StringComparison.Ordinal)
             ? Path.Combine(KnowledgeRoot, "GB_T_3811_2008", normalized)
             : Path.Combine(KnowledgeRoot, normalized);
+    }
+
+    private static HashSet<string> ExtractValidSectionPaths(string original)
+    {
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            original, @"(?m)^#{1,6}[ \t]+[^\r\n]+", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if (matches.Count == 0 || matches[0].Index > 0)
+        {
+            paths.Add(string.Empty);
+        }
+
+        var parents = new List<(int Level, string Heading)>();
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var level = match.Value.TakeWhile(c => c == '#').Count();
+            var title = match.Value[level..].Trim();
+            parents.RemoveAll(x => x.Level >= level);
+            parents.Add((level, title));
+            paths.Add(string.Join(" / ", parents.Select(x => x.Heading)));
+        }
+
+        return paths;
     }
 
     internal static void Register(string prompt, IReadOnlyList<LocalChatEvidence> evidence,
@@ -105,13 +128,12 @@ public static class KnowledgeDisclosureGuard
                 // Existing keyword loader indexes Markdown.Trim(); validate the actual original ranges.
                 var original = Encoding.UTF8.GetString(fileBytes).TrimStart('\uFEFF').Trim();
                 var approvedEntry = root.GetProperty("documents").EnumerateArray().Single(x => x.GetProperty("file").GetString() == name);
-                var headings = original.Split('\n').Select(line => line.Trim()).Where(line => line.StartsWith('#'))
-                    .Select(line => line.TrimStart('#').Trim()).ToHashSet(StringComparer.Ordinal);
+                var validSectionPaths = ExtractValidSectionPaths(original);
                 foreach (var e in proof.Evidence.Where(e => e.File == name))
                 {
                     if (e.Clause != approvedEntry.GetProperty("clause").GetString()
                         || e.ChunkId != approvedEntry.GetProperty("chunkId").GetString()
-                        || e.Ranges.Any(r => r.Section.Split(" / ").Any(part => !headings.Contains(part)))
+                        || e.Ranges.Any(r => !validSectionPaths.Contains(r.Section))
                         || e.FullText != original || e.Ranges.Length == 0
                         || e.Ranges.Any(r => r.StartCharacter < 0 || r.Length <= 0
                             || r.StartCharacter > original.Length - r.Length)

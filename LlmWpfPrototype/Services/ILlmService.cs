@@ -38,7 +38,8 @@ public sealed record LlmChatRequestOptions(
     bool ReplyOnlyMode = false,
     string? IntentLabel = null,
     bool AllowApdlLauncherAction = false,
-    string? RuntimeContextSummary = null);
+    string? RuntimeContextSummary = null,
+    IReadOnlyList<LlmImagePayload>? UserImages = null);
 
 public interface ILlmService
 {

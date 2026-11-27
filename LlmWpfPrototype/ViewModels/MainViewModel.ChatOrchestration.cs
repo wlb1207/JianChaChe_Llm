@@ -14,10 +14,27 @@ public sealed partial class MainViewModel
 {
     private AssistantRuntimeContextSnapshot BuildRuntimeContextSnapshot(string? currentUserInput = null)
     {
-        var isModelOpened = _solidWorksService.TryGetActiveDocumentInfoWithoutStartingSolidWorks(out var activeDocumentPath);
-        var activeDocumentName = string.IsNullOrWhiteSpace(activeDocumentPath)
-            ? string.Empty
-            : Path.GetFileName(activeDocumentPath);
+        var swDiag = _solidWorksService.GetSessionDiagnostics();
+        var isModelOpened = swDiag.IsWorkingModelReady;
+        var activeDocumentName = !string.IsNullOrWhiteSpace(swDiag.ActiveDocumentName)
+            ? swDiag.ActiveDocumentName
+            : (string.IsNullOrWhiteSpace(swDiag.OpenWorkingAssemblyPath)
+                ? string.Empty
+                : Path.GetFileName(swDiag.OpenWorkingAssemblyPath));
+        var solidWorksStatusDetail = swDiag.State switch
+        {
+            SolidWorksSessionState.ConnectedWorkingAssembly =>
+                $"已打开并连接当前项目工作总装配（文档：{activeDocumentName}）",
+            SolidWorksSessionState.ConnectedDifferentDocument when swDiag.HasOpenWorkingAssemblyInSession =>
+                $"已连接 SolidWorks（当前激活：{swDiag.ActiveDocumentName}，本项目工作总装配已在后台打开，改模时会自动切回）",
+            SolidWorksSessionState.ConnectedDifferentDocument =>
+                $"已连接 SolidWorks，但当前打开的是“{swDiag.ActiveDocumentName}”，不属于当前项目工作副本目录（需发送“打开当前模型”切换至本项目工作副本）",
+            SolidWorksSessionState.ProcessRunningComUnavailable =>
+                $"检测到本机有 {swDiag.RunningProcessCount} 个 SolidWorks 进程正在运行，但无法附着其 COM 会话（HRESULT=0x{(swDiag.LastAttachHResult != 0 ? swDiag.LastAttachHResult : unchecked((int)0x800401E3)):X8}，常见于跨重启旧会话未注册 ROT 或管理员权限不一致；需关闭旧 SolidWorks 窗口后发送“打开当前模型”）",
+            SolidWorksSessionState.ConnectedNoActiveDocument =>
+                "SolidWorks 已运行并连接，但尚未打开任何模型文档",
+            _ => "尚未打开（未检测到运行中的 SolidWorks 进程）"
+        };
 
         var editableMembers = BuildEditableParameterLines();
         var isApdlLauncherConfigured = !string.IsNullOrWhiteSpace(_simulationOptions.LauncherPath);
@@ -64,7 +81,8 @@ public sealed partial class MainViewModel
             ProjectContextBlock: projectContextBlock,
             LiveStructureDimensionsBlock: liveDimensionsBlock,
             EngineeringKnowledgeGuidanceBlock: engineeringKnowledgeBlock,
-            LocalKnowledgeBaseCatalogSummary: isLocalKnowledgeAvailable ? kbCatalogSummary : null);
+            LocalKnowledgeBaseCatalogSummary: isLocalKnowledgeAvailable ? kbCatalogSummary : null,
+            SolidWorksStatusDetail: solidWorksStatusDetail);
     }
 
     private string BuildWelcomeMessage()
@@ -76,50 +94,36 @@ public sealed partial class MainViewModel
         {
             if (active.CurrentVersionNumber > 0)
             {
-                return $"已进入【{active.Name}（{active.VersionTag}）】· 当前上弦杆 `{active.UpperChord.SpecText} mm`、下弦杆 `{active.LowerChord.SpecText} mm`（已绑定 {v.StandardModelCode} 实体模型及 GB/T 3811 / JT/T 1430 / GB 50017 三规范边界）。";
+                return $"已进入【{active.Name}（{active.VersionTag}）】· 车型：{v.VehicleName}（JT/T 1430 分类 {v.StandardModelCode}），当前上弦杆 `{active.UpperChord.SpecText} mm`、下弦杆 `{active.LowerChord.SpecText} mm`。";
             }
 
-            return $"已进入【{active.Name}（{active.VersionTag}）】· 已绑定实车 {v.StandardModelCode}（{v.MaterialGrade}，上/下弦杆 `{active.UpperChord.SpecText} mm`）与 GB/T 3811 / JT/T 1430 / GB 50017 三规范边界，可直接讨论改型、预检改模或联动 APDL 仿真。";
+            return $"已进入【{active.Name}（{active.VersionTag}）】· 车型：{v.VehicleName}（JT/T 1430 分类 {v.StandardModelCode}，{v.MaterialGrade}，上/下弦杆 `{active.UpperChord.SpecText} mm`），已挂载多标准工程规范知识库。";
         }
 
-        return $"已绑定实车 {v.StandardModelCode}（{v.MaterialGrade}，母型 `{v.BaselineWidthMm:0.#}×{v.BaselineHeightMm:0.#}×{v.BaselineThicknessMm:0.#} mm`）与 GB/T 3811 / JT/T 1430 / GB 50017 三规范边界，可直接开展设计讨论、参数化改模与仿真校核。";
+        return $"车型：{v.VehicleName}（JT/T 1430 分类 {v.StandardModelCode}，{v.MaterialGrade}，母型 `{v.BaselineWidthMm:0.#}×{v.BaselineHeightMm:0.#}×{v.BaselineThicknessMm:0.#} mm`），已挂载多标准工程规范知识库。";
     }
 
     private string BuildDynamicGreetingReply()
     {
         var snapshot = BuildRuntimeContextSnapshot();
         var active = ActiveProject;
-        var upper = active?.UpperChord ?? MemberSectionSpecRecord.CreateBaseline("upper_chord", "上弦杆");
-        var lower = active?.LowerChord ?? MemberSectionSpecRecord.CreateBaseline("lower_chord", "下弦杆");
-        var projectLabel = active is not null ? $"【{active.Name}（{active.VersionTag}）】" : "当前设计项目";
 
-        var sb = new StringBuilder();
-        sb.Append($"你好！当前{projectLabel}上弦杆为 `{upper.SpecText} mm`、下弦杆为 `{lower.SpecText} mm`");
-        sb.Append(snapshot.IsSolidWorksModelOpened
-            ? $"，SolidWorks 工作模型已打开（{(string.IsNullOrWhiteSpace(snapshot.ActiveDocumentName) ? "当前活动模型" : snapshot.ActiveDocumentName)}）"
-            : "，三本规范边界与工作区均已就绪");
-        sb.Append('。');
+        var pendingNote = !string.IsNullOrWhiteSpace(snapshot.PendingCadEditSummary)
+            ? $"（另外提醒：当前还有一项待确认的改模计划——{snapshot.PendingCadEditSummary}，您可以直接回复“确认修改”或“取消修改”。）"
+            : active is { CurrentVersionNumber: > 0 }
+                ? $"（当前已定位到 **{active.Name} · {active.VersionTag}** 版本。）"
+                : string.Empty;
 
-        if (!string.IsNullOrWhiteSpace(snapshot.PendingCadEditSummary))
-        {
-            sb.Append($"目前还有一项待确认改模：{snapshot.PendingCadEditSummary}，可直接发送“确认修改”或“取消修改”。");
-            return sb.ToString();
-        }
+        return $"""
+您好！欢迎使用**桥梁检查车智能设计助手**，当前已为您载入**不可伸缩单层桥梁检查车（JC-GD-NG）**的设计上下文。{pendingNote}我可以协助您完成以下工作：
 
-        if (active is { CurrentVersionNumber: > 0 })
-        {
-            sb.Append(snapshot.IsApdlLauncherAvailable
-                ? "这轮是继续迭代另一组弦杆、复核宽厚比与 7.35 m 悬臂挠度红线，还是直接启动 APDL 做仿真对比？"
-                : "这轮是继续迭代另一组弦杆，还是先对照三本规范复核宽厚比与 7.35 m 悬臂挠度红线？");
-        }
-        else
-        {
-            sb.Append(snapshot.IsSolidWorksModelOpened
-                ? "这轮想先评估减薄/扩廓轻量化方案、直接改一组三维截面看规范预检，还是打开 APDL 准备仿真工况？"
-                : "这轮想先评估下弦杆减薄或扩廓减重方案、直接预检调整截面，还是先打开 SolidWorks 工作模型看一下？");
-        }
+- **工程规范与附图查证**：检索已挂载的 6 本国标/行标（JT/T 1430、GB/T 3811、GB 50017、GB/T 6728、GB/T 1591、GB 50661）核心条文、公式及高清矢量工程图；
+- **结构咨询与方案评估**：结合本车当前截面与受力特点，讨论轻量化、刚度、稳定性、焊缝与选材边界；
+- **SolidWorks 参数化改模**：打开当前工作模型，查询或经您确认后联动修改上/下弦杆截面与壁厚；
+- **ANSYS APDL 仿真协同**：拉起本地 APDL 启动器界面，辅助梳理校核流程或准备分析脚本。
 
-        return sb.ToString();
+请问您现在想先从哪一项开始？也可以点击上方「展开设计简报」直接使用快捷入口。
+""".Trim();
     }
 
     private static string BuildPendingSlotSummary(PendingModificationContext context)

@@ -15,14 +15,14 @@
       "MemberRole": "UpperChord",
       "SectionType": "ClosedRectangularSection",
       "SectionModelingMode": "ThinFeature",
-      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\4-方管70×70×5-1603.SLDPRT",
+      "PartFilePath": "桁架1\\4-方管70×70×5-1603.SLDPRT",
       "ComponentName": "4-方管70×70×5-1603-1",
       "WidthDimensionName": "D1@草图2@4-方管70×70×5-1603.Part",
       "HeightDimensionName": "D2@草图2@4-方管70×70×5-1603.Part",
       "ThicknessDimensionName": "D5@拉伸-薄壁1@4-方管70×70×5-1603.Part",
       "PartMappings": [
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\4-方管70×70×5-1603.SLDPRT",
+          "PartFilePath": "桁架1\\4-方管70×70×5-1603.SLDPRT",
           "ComponentName": "4-方管70×70×5-1603-1",
           "WidthDimensionName": "D1@草图2@4-方管70×70×5-1603.Part",
           "HeightDimensionName": "D2@草图2@4-方管70×70×5-1603.Part",
@@ -31,7 +31,7 @@
           "InnerHeightDimensionName": ""
         },
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\5-方管70×70×5-6000.SLDPRT",
+          "PartFilePath": "桁架2\\5-方管70×70×5-6000.SLDPRT",
           "ComponentName": "5-方管70×70×5-6000-1",
           "WidthDimensionName": "D1@草图1@5-方管70×70×5-6000.Part",
           "HeightDimensionName": "D2@草图1@5-方管70×70×5-6000.Part",
@@ -40,7 +40,7 @@
           "InnerHeightDimensionName": ""
         },
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\2-方管70×70×5-379.SLDPRT",
+          "PartFilePath": "桁架1\\2-方管70×70×5-379.SLDPRT",
           "ComponentName": "2-方管70×70×5-379-1",
           "InnerWidthValueMode": "OuterMinusTwoThickness",
           "InnerHeightValueMode": "OuterMinusTwoThickness",
@@ -55,7 +55,7 @@
           "InnerHeightDimensionName": "D2@草图2@2-方管70×70×5-379.Part"
         },
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\2-方管70×70×5-1202.SLDPRT",
+          "PartFilePath": "桁架2\\2-方管70×70×5-1202.SLDPRT",
           "ComponentName": "2-方管70×70×5-1202-1",
           "WidthDimensionName": "D1@草图1@2-方管70×70×5-1202.Part",
           "HeightDimensionName": "D2@草图1@2-方管70×70×5-1202.Part",
@@ -86,14 +86,14 @@
       "MemberRole": "LowerTruss",
       "SectionType": "ClosedRectangularSection",
       "SectionModelingMode": "SketchProfile",
-      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\1-方管70×70×5-1159.SLDPRT",
+      "PartFilePath": "桁架2\\1-方管70×70×5-1159.SLDPRT",
       "ComponentName": "",
       "WidthDimensionName": "D3@草图2@1-方管70×70×5-1159.Part",
       "HeightDimensionName": "D1@草图2@1-方管70×70×5-1159.Part",
       "ThicknessDimensionName": "",
       "PartMappings": [
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\1-方管70×70×5-1159.SLDPRT",
+          "PartFilePath": "桁架2\\1-方管70×70×5-1159.SLDPRT",
           "ComponentName": "",
           "InnerWidthValueMode": "OuterMinusTwoThickness",
           "InnerHeightValueMode": "OuterMinusTwoThickness",
@@ -129,14 +129,14 @@
       "MemberRole": "LowerChord",
       "SectionType": "ClosedRectangularSection",
       "SectionModelingMode": "ThinFeature",
-      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\34-方管70×70×5×6575.SLDPRT",
+      "PartFilePath": "桁架1\\34-方管70×70×5×6575.SLDPRT",
       "ComponentName": "34-方管70×70×5×6575-1",
       "WidthDimensionName": "D1@草图1@34-方管70×70×5×6575.Part",
       "HeightDimensionName": "D2@草图1@34-方管70×70×5×6575.Part",
       "ThicknessDimensionName": "D5@拉伸-薄壁1@34-方管70×70×5×6575.Part",
       "PartMappings": [
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\34-方管70×70×5×6575.SLDPRT",
+          "PartFilePath": "桁架1\\34-方管70×70×5×6575.SLDPRT",
           "ComponentName": "34-方管70×70×5×6575-1",
           "WidthDimensionName": "D1@草图1@34-方管70×70×5×6575.Part",
           "HeightDimensionName": "D2@草图1@34-方管70×70×5×6575.Part",
@@ -145,7 +145,7 @@
           "InnerHeightDimensionName": ""
         },
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\33-方管70×70×5×838.SLDPRT",
+          "PartFilePath": "桁架1\\33-方管70×70×5×838.SLDPRT",
           "ComponentName": "33-方管70×70×5×838-1",
           "WidthDimensionName": "D1@草图1@33-方管70×70×5×838.Part",
           "HeightDimensionName": "D2@草图1@33-方管70×70×5×838.Part",
@@ -154,7 +154,7 @@
           "InnerHeightDimensionName": ""
         },
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\10-方管70×70×5-6375.SLDPRT",
+          "PartFilePath": "桁架2\\10-方管70×70×5-6375.SLDPRT",
           "ComponentName": "10-方管70×70×5-6375-1",
           "WidthDimensionName": "D1@草图1@10-方管70×70×5-6375.Part",
           "HeightDimensionName": "D2@草图1@10-方管70×70×5-6375.Part",
@@ -185,14 +185,14 @@
       "MemberRole": "LowerChord",
       "SectionType": "ClosedRectangularSection",
       "SectionModelingMode": "ThinFeature",
-      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\10-方管70×70×5-6375.SLDPRT",
+      "PartFilePath": "桁架2\\10-方管70×70×5-6375.SLDPRT",
       "ComponentName": "10-方管70×70×5-6375-1",
       "WidthDimensionName": "D1@草图1@10-方管70×70×5-6375.Part",
       "HeightDimensionName": "D2@草图1@10-方管70×70×5-6375.Part",
       "ThicknessDimensionName": "D5@拉伸-薄壁1@10-方管70×70×5-6375.Part",
       "PartMappings": [
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架2\\10-方管70×70×5-6375.SLDPRT",
+          "PartFilePath": "桁架2\\10-方管70×70×5-6375.SLDPRT",
           "ComponentName": "10-方管70×70×5-6375-1",
           "WidthDimensionName": "D1@草图1@10-方管70×70×5-6375.Part",
           "HeightDimensionName": "D2@草图1@10-方管70×70×5-6375.Part",
@@ -223,14 +223,14 @@
       "MemberRole": "LowerChord",
       "SectionType": "ClosedRectangularSection",
       "SectionModelingMode": "ThinFeature",
-      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\33-方管70×70×5×838.SLDPRT",
+      "PartFilePath": "桁架1\\33-方管70×70×5×838.SLDPRT",
       "ComponentName": "33-方管70×70×5×838-1",
       "WidthDimensionName": "D1@草图1@33-方管70×70×5×838.Part",
       "HeightDimensionName": "D2@草图1@33-方管70×70×5×838.Part",
       "ThicknessDimensionName": "D5@拉伸-薄壁1@33-方管70×70×5×838.Part",
       "PartMappings": [
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\33-方管70×70×5×838.SLDPRT",
+          "PartFilePath": "桁架1\\33-方管70×70×5×838.SLDPRT",
           "ComponentName": "33-方管70×70×5×838-1",
           "WidthDimensionName": "D1@草图1@33-方管70×70×5×838.Part",
           "HeightDimensionName": "D2@草图1@33-方管70×70×5×838.Part",
@@ -261,14 +261,14 @@
       "MemberRole": "LowerChord",
       "SectionType": "ClosedRectangularSection",
       "SectionModelingMode": "ThinFeature",
-      "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\34-方管70×70×5×6575.SLDPRT",
+      "PartFilePath": "桁架1\\34-方管70×70×5×6575.SLDPRT",
       "ComponentName": "34-方管70×70×5×6575-1",
       "WidthDimensionName": "D1@草图1@34-方管70×70×5×6575.Part",
       "HeightDimensionName": "D2@草图1@34-方管70×70×5×6575.Part",
       "ThicknessDimensionName": "D5@拉伸-薄壁1@34-方管70×70×5×6575.Part",
       "PartMappings": [
         {
-          "PartFilePath": "E:\\反力架\\反力架\\三六重工v2\\不伸缩单层检查车\\Solidworks模型\\新模型\\桁架1\\34-方管70×70×5×6575.SLDPRT",
+          "PartFilePath": "桁架1\\34-方管70×70×5×6575.SLDPRT",
           "ComponentName": "34-方管70×70×5×6575-1",
           "WidthDimensionName": "D1@草图1@34-方管70×70×5×6575.Part",
           "HeightDimensionName": "D2@草图1@34-方管70×70×5×6575.Part",

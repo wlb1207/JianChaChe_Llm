@@ -7,10 +7,101 @@
     <UserControl.Resources>
         <ui:RagCitationLabelConverter x:Key="CitationLabel" />
         <ui:RagCitationStatusConverter x:Key="CitationStatus" />
+        <ui:LocalKnowledgeAssetPathToBitmapConverter x:Key="AssetPathToBitmap" />
     </UserControl.Resources>
     <StackPanel TextElement.FontSize="14" TextElement.Foreground="#FF0F172A">
         <ui:RagFormattedText Markup="{Binding Text}" Citations="{Binding LocalSources}"
                                HideSourceReferences="False" />
+
+        <!-- 本轮命中的高清矢量规范附图直接平铺展示区（无需展开折叠条即可看到并点击放大） -->
+        <Border Margin="0,10,0,0"
+                Padding="11,9"
+                BorderBrush="#FFBAE6FD"
+                BorderThickness="1"
+                Background="#FFF8FCFF"
+                CornerRadius="8">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasDirectReplyFigures}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="{Binding DirectReplyFiguresHeader}"
+                           FontSize="12.5"
+                           FontWeight="SemiBold"
+                           Foreground="#FF0369A1"
+                           Margin="0,0,0,8" />
+                <ItemsControl ItemsSource="{Binding DirectReplyFigures}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Margin="0,0,10,10"
+                                    Padding="9,8"
+                                    Width="312"
+                                    Background="White"
+                                    BorderBrush="#FFCBD5E1"
+                                    BorderThickness="1"
+                                    HorizontalContentAlignment="Stretch"
+                                    VerticalContentAlignment="Top"
+                                    Cursor="Hand"
+                                    ToolTip="点击打开高清矢量图放大窗口（支持 Ctrl + 滚轮缩放）"
+                                    Tag="{Binding}"
+                                    Click="DirectFigureCardButton_Click">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="点击放大 ↗"
+                                                   FontSize="10.5"
+                                                   FontWeight="Medium"
+                                                   Foreground="#FF0284C7"
+                                                   VerticalAlignment="Center" />
+                                        <Border HorizontalAlignment="Left"
+                                                Padding="6,1.5"
+                                                CornerRadius="5"
+                                                Background="#FFE0F2FE"
+                                                BorderBrush="#FFBAE6FD"
+                                                BorderThickness="1">
+                                            <TextBlock Text="{Binding StandardLabel}"
+                                                       FontSize="10.5"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#FF0369A1" />
+                                        </Border>
+                                    </DockPanel>
+                                    <Border Background="White"
+                                            BorderBrush="#FFE2E8F0"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="4"
+                                            MinHeight="138">
+                                        <Image Source="{Binding RelativeAssetPath, Converter={StaticResource AssetPathToBitmap}}"
+                                               Stretch="Uniform"
+                                               MaxWidth="284"
+                                               MaxHeight="185"
+                                               HorizontalAlignment="Center"
+                                               RenderOptions.BitmapScalingMode="HighQuality" />
+                                    </Border>
+                                    <TextBlock Margin="0,6,0,0"
+                                               Text="{Binding Title}"
+                                               FontSize="11.8"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FF0F172A"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
         <TextBlock Margin="0,8,0,0"
                    Foreground="#FF475569"
                    FontSize="12"
@@ -52,18 +143,108 @@
                                 <Expander Header="{Binding}">
                                     <Expander.HeaderTemplate>
                                         <DataTemplate>
-                                            <StackPanel Orientation="Horizontal">
+                                            <WrapPanel VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Id, Converter={StaticResource CitationLabel}}"
-                                                           Foreground="#FF0F5A99" FontWeight="SemiBold" />
-                                                <TextBlock Text=" · " Foreground="#FF64748B" />
-                                                <TextBlock Text="{Binding Source.Title}" FontWeight="SemiBold" />
-                                            </StackPanel>
+                                                           Foreground="#FF0F5A99"
+                                                           FontWeight="SemiBold"
+                                                           VerticalAlignment="Center" />
+                                                <Border Margin="6,1,6,1"
+                                                        Padding="6,1.5"
+                                                        CornerRadius="5"
+                                                        Background="#FFE0F2FE"
+                                                        BorderBrush="#FFBAE6FD"
+                                                        BorderThickness="1"
+                                                        VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding StandardLabel}"
+                                                               FontSize="11.5"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#FF0369A1" />
+                                                </Border>
+                                                <TextBlock Text="{Binding Source.Title}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#FF0F172A"
+                                                           TextWrapping="Wrap"
+                                                           VerticalAlignment="Center" />
+                                                <Border Margin="6,1,0,1"
+                                                        Padding="5,1"
+                                                        CornerRadius="4"
+                                                        Background="#FFF1F5F9"
+                                                        BorderBrush="#FFE2E8F0"
+                                                        BorderThickness="1"
+                                                        VerticalAlignment="Center">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ClauseLabel}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding ClauseLabel}"
+                                                               FontSize="11"
+                                                               Foreground="#FF475569" />
+                                                </Border>
+                                                <Border Margin="6,1,0,1"
+                                                        Padding="6,1"
+                                                        CornerRadius="4"
+                                                        Background="#FFECFDF5"
+                                                        BorderBrush="#FFA7F3D0"
+                                                        BorderThickness="1"
+                                                        VerticalAlignment="Center"
+                                                        ToolTip="展开此条依据可直接查看高清矢量工程图，点击图片可放大缩放">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding FigureBadgeText}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding FigureBadgeText}"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#FF047857" />
+                                                </Border>
+                                            </WrapPanel>
                                         </DataTemplate>
                                     </Expander.HeaderTemplate>
                                     <StackPanel Margin="0,8,0,2">
-                                        <ui:RagFormattedText Markup="{Binding SentText}" Margin="0,6,0,6"
-                                                             MaxHeight="260" VerticalScrollBarVisibility="Auto"
-                                                             HideSourceReferences="False" />
+                                        <Border Background="#FFFAFCFF"
+                                                BorderBrush="#FFE2E8F0"
+                                                BorderThickness="1"
+                                                CornerRadius="6"
+                                                Padding="2">
+                                            <ScrollViewer x:Name="EvidenceScrollViewer"
+                                                          MaxHeight="360"
+                                                          VerticalScrollBarVisibility="Auto"
+                                                          HorizontalScrollBarVisibility="Disabled"
+                                                          Padding="10,8,8,8"
+                                                          PreviewMouseWheel="EvidenceScrollViewer_PreviewMouseWheel">
+                                                <ui:RagFormattedText Markup="{Binding SentText}"
+                                                                     VerticalScrollBarVisibility="Disabled"
+                                                                     HideSourceReferences="False" />
+                                            </ScrollViewer>
+                                        </Border>
+                                        <DockPanel Margin="2,6,2,0">
+                                            <Button DockPanel.Dock="Right"
+                                                    Padding="8,2"
+                                                    FontSize="11.5"
+                                                    Foreground="#FF0369A1"
+                                                    Background="#FFF0F9FF"
+                                                    BorderBrush="#FFBAE6FD"
+                                                    BorderThickness="1"
+                                                    Cursor="Hand"
+                                                    Content="展开全文 ▾"
+                                                    ToolTip="切换完整展开或固定高度滚动显示本条依据原文"
+                                                    Click="ToggleEvidenceFullHeightButton_Click" />
+                                            <TextBlock VerticalAlignment="Center"
+                                                       FontSize="11.5"
+                                                       Foreground="#FF64748B"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Text="{Binding FooterSummary}" />
+                                        </DockPanel>
                                     </StackPanel>
                                 </Expander>
                             </Border>

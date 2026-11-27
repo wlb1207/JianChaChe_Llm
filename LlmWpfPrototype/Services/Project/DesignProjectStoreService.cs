@@ -134,6 +134,7 @@ public sealed class DesignProjectStoreService
             try
             {
                 CopyDirectoryExcludingSubtree(source.WorkspaceFolder, workspaceFolder);
+                CadReferenceBoundary.WriteForkOrigin(workspaceFolder, source.WorkspaceFolder);
                 forked.IsWorkspaceMaterialized = true;
             }
             catch
@@ -574,6 +575,16 @@ public sealed class DesignProjectStoreService
         return reportPath;
     }
 
+    public string ExportProjectWordReport(string projectId, string outputDirectory)
+    {
+        var project = GetProjectById(projectId) ?? ActiveProject
+            ?? throw new InvalidOperationException("当前没有可导出的设计项目。");
+        var conversations = project.Conversations
+            .Select(summary => (summary, TryLoadConversation(project.Id, summary.Id)))
+            .ToList();
+        return DesignReportWordExporter.Export(project, conversations, outputDirectory);
+    }
+
     private void LoadOrInitialize()
     {
         var indexPath = GetIndexFilePath();
@@ -774,6 +785,68 @@ public sealed class DesignProjectStoreService
         }
     }
 
+    /// <summary>
+    /// Safely appends an assistant message, conversation turn, or log entries to a background conversation
+    /// that is no longer displayed on screen, preventing cross-conversation or cross-project pollution.
+    /// </summary>
+    public bool AppendBackgroundConversationResult(
+        string projectId,
+        string conversationId,
+        PersistedChatMessage? assistantMessage = null,
+        PersistedTurnRecord? turn = null,
+        IReadOnlyList<LogEntryItem>? extraLogs = null,
+        string? userInputForTitle = null)
+    {
+        if (string.IsNullOrWhiteSpace(projectId) || string.IsNullOrWhiteSpace(conversationId))
+        {
+            return false;
+        }
+
+        var project = GetProjectById(projectId);
+        if (project is null)
+        {
+            return false;
+        }
+
+        var conv = TryLoadConversation(projectId, conversationId);
+        if (conv is null)
+        {
+            return false;
+        }
+
+        var changedConversation = false;
+        if (assistantMessage is not null)
+        {
+            conv.Messages.Add(assistantMessage);
+            changedConversation = true;
+        }
+
+        if (turn is not null)
+        {
+            conv.Turns.Add(turn);
+            changedConversation = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(userInputForTitle))
+        {
+            AutoUpdateConversationTitleIfDefault(project, conv, userInputForTitle);
+        }
+
+        if (changedConversation)
+        {
+            SaveConversationState(project, conv);
+        }
+
+        if (extraLogs is { Count: > 0 })
+        {
+            var existingLogs = LoadConversationLogs(projectId, conversationId);
+            existingLogs.AddRange(extraLogs);
+            SaveConversationLogs(projectId, conversationId, existingLogs);
+        }
+
+        return true;
+    }
+
     private string GetIndexFilePath() => Path.Combine(_storageRoot, "projects-index.json");
 
     private string GetProjectDirectory(string projectId) => Path.Combine(_storageRoot, projectId);
@@ -815,7 +888,8 @@ public sealed class DesignProjectStoreService
             var rel = Path.GetRelativePath(sourceFolder, file.FullName);
             if (rel.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 .Any(seg => string.Equals(seg, "backup", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(seg, "初始模型", StringComparison.OrdinalIgnoreCase)))
+                            string.Equals(seg, "初始模型", StringComparison.OrdinalIgnoreCase)) ||
+                CadReferenceBoundary.IsWorkspaceMetadataFileName(file.Name))
             {
                 continue;
             }

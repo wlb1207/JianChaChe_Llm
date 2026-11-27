@@ -14,6 +14,8 @@ using System.Text.Encodings.Web;
 
 using System.Text.Json;
 
+using System.Text.RegularExpressions;
+
 using LlmWpfPrototype.Models;
 
 
@@ -132,7 +134,7 @@ public sealed partial class LlmService : ILlmService
 
         {
 
-            MockMode => await BuildMockResponseAsync(cancellationToken),
+            MockMode => await BuildMockResponseAsync(requestOptions, cancellationToken),
 
             CloudMode => await CallRemoteApiAsync(userInput, conversationHistory, requestOptions, requireApiKey: true, cancellationToken),
 
@@ -604,11 +606,29 @@ Current supported actions/commands:
 """;
     }
 
-    private Task<string> BuildMockResponseAsync(CancellationToken cancellationToken)
+    private Task<string> BuildMockResponseAsync(LlmChatRequestOptions? requestOptions, CancellationToken cancellationToken)
 
     {
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (requestOptions?.UserImages is { Count: > 0 } mockImages)
+        {
+            var names = string.Join("、", mockImages.Select(i => i.DisplayName));
+            var visionReply = $"【离线模拟识图】已收到 {mockImages.Count} 张工程图片（{names}）。当前为离线模拟模式，切换至在线模式即可调用 ChatGPT 多模态能力实时识别图纸尺寸、仿真云图与报错截图。";
+            var visionResult = new LlmParseResult
+            {
+                Reply = visionReply,
+                Message = visionReply,
+                AssistantText = visionReply,
+                Actions = [],
+                Commands = [],
+                Parameters = [],
+                NeedConfirmation = false,
+                Questions = []
+            };
+            return Task.FromResult(JsonSerializer.Serialize(visionResult, JsonOptions));
+        }
 
 
 
@@ -843,7 +863,8 @@ Current supported actions/commands:
             try
             {
                 EmitDiagnostic($"[LLM Chat] ResponseFormatAttempt={attempt}");
-                var payload = BuildPayload(userInput, conversationHistory, attempt, systemPrompt, shouldUseStreaming);
+                var userImages = requestOptions?.UserImages;
+                var payload = BuildPayload(userInput, conversationHistory, attempt, systemPrompt, shouldUseStreaming, userImages);
                 WriteRequestDiagnostics(
                     purpose: "LLM Chat",
                     requestUrl,
@@ -863,6 +884,10 @@ Current supported actions/commands:
                     maxOutputTokens: null,
 
                     apiKey);
+                if (userImages is { Count: > 0 })
+                {
+                    EmitDiagnostic($"[LLM Chat] AttachedImagesCount={userImages.Count}");
+                }
 
 
 
@@ -1123,9 +1148,59 @@ Current supported actions/commands:
         }
     }
 
+    private static readonly Regex ParenthesizedExternalLinkRegex = new(
+        @"[ \t]*[\(（]\s*(?:\[[^\]\r\n]{1,160}\]\(\s*https?://[^)\r\n\s]+\s*\)(?:[\s,，、;；]*))+\s*[\)）]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex InlineExternalMarkdownLinkRegex = new(
+        @"\[(?<label>[^\]\r\n]{1,160})\]\(\s*(?<url>https?://[^)\r\n\s]+)\s*\)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex BareExternalUrlRegex = new(
+        @"[ \t]*[\(（]?\s*https?://[^\s\)）\]】""'<>]+[\)）]?",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex DomainLikeLabelRegex = new(
+        @"^(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:/[^\s]*)?$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    internal static string SanitizeExternalWebCitations(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text ?? string.Empty;
+        }
+
+        if (!text.Contains("http://", StringComparison.OrdinalIgnoreCase) &&
+            !text.Contains("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return text;
+        }
+
+        var cleaned = ParenthesizedExternalLinkRegex.Replace(text, string.Empty);
+        cleaned = InlineExternalMarkdownLinkRegex.Replace(cleaned, match =>
+        {
+            var label = match.Groups["label"].Value.Trim();
+            var url = match.Groups["url"].Value;
+            if (url.Contains("utm_source=", StringComparison.OrdinalIgnoreCase) ||
+                DomainLikeLabelRegex.IsMatch(label))
+            {
+                return string.Empty;
+            }
+
+            return label;
+        });
+        cleaned = BareExternalUrlRegex.Replace(cleaned, string.Empty);
+        cleaned = Regex.Replace(cleaned, @"[ \t]*[\(（]\s*[\)）]", string.Empty);
+        cleaned = Regex.Replace(cleaned, @"[ \t]+([。，；：！？、,.!?;:])", "$1");
+        cleaned = Regex.Replace(cleaned, @"[ \t]{2,}", " ");
+        cleaned = Regex.Replace(cleaned, @"[ \t]+\r?\n", "\n");
+        return cleaned.Trim();
+    }
+
     private string BuildPlainTextReplyParseResultJson(string assistantContent)
     {
-        var trimmed = assistantContent.Trim();
+        var trimmed = SanitizeExternalWebCitations(assistantContent).Trim();
         var parseResult = new LlmParseResult
         {
             Reply = trimmed,
@@ -1142,6 +1217,23 @@ Current supported actions/commands:
     }
 
 
+    internal string BuildPayloadJsonForTest(
+        string userInput,
+        IReadOnlyList<ConversationMessage>? conversationHistory = null,
+        LlmChatRequestOptions? requestOptions = null,
+        bool stream = true)
+    {
+        var systemPrompt = BuildUnifiedConversationSystemPrompt(requestOptions);
+        var payload = BuildPayload(
+            userInput,
+            conversationHistory,
+            ResponseFormatMode.None,
+            systemPrompt,
+            stream,
+            requestOptions?.UserImages);
+        return JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
     private object BuildPayload(
 
         string userInput,
@@ -1152,7 +1244,9 @@ Current supported actions/commands:
 
         string? systemPrompt = null,
 
-        bool stream = false)
+        bool stream = false,
+
+        IReadOnlyList<LlmImagePayload>? userImages = null)
 
     {
 
@@ -1224,15 +1318,49 @@ Current supported actions/commands:
 
 
 
-        messages.Add(new
-
+        if (userImages is { Count: > 0 })
         {
+            var contentParts = new List<object>
+            {
+                new
+                {
+                    type = "text",
+                    text = userInput
+                }
+            };
 
-            role = "user",
+            foreach (var img in userImages)
+            {
+                if (img is null || string.IsNullOrWhiteSpace(img.Base64Data))
+                {
+                    continue;
+                }
 
-            content = userInput
+                contentParts.Add(new
+                {
+                    type = "image_url",
+                    image_url = new
+                    {
+                        url = img.DataUri,
+                        detail = "high"
+                    }
+                });
+            }
 
-        });
+            messages.Add(new
+            {
+                role = "user",
+                content = contentParts.ToArray()
+            });
+        }
+        else
+        {
+            messages.Add(new
+            {
+                role = "user",
+                content = userInput
+            });
+        }
 
 
 
@@ -2055,11 +2183,11 @@ Current supported actions/commands:
 
         return new LlmResponseMetadata(
 
-            TryGetString(root, "id") ?? current.ResponseId,
+            FirstNonBlank(TryGetString(root, "id"), current.ResponseId),
 
-            TryGetString(root, "object") ?? current.ResponseObject,
+            FirstNonBlank(TryGetString(root, "object"), current.ResponseObject),
 
-            TryGetString(root, "model") ?? current.ResponseModel,
+            FirstNonBlank(TryGetString(root, "model"), current.ResponseModel),
 
             TryGetInt32(usage, "prompt_tokens") ?? current.UsagePromptTokens,
 
@@ -2067,10 +2195,21 @@ Current supported actions/commands:
 
             TryGetInt32(usage, "total_tokens") ?? current.UsageTotalTokens,
 
-            choice.ValueKind == JsonValueKind.Object ? TryGetString(choice, "finish_reason") ?? current.FinishReason : current.FinishReason,
+            choice.ValueKind == JsonValueKind.Object ? FirstNonBlank(TryGetString(choice, "finish_reason"), current.FinishReason) : current.FinishReason,
 
             current.AssistantContentPreview);
 
+    }
+
+    private static string? FirstNonBlank(string? preferred, string? fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(preferred) &&
+            !string.Equals(preferred.Trim(), "null", StringComparison.OrdinalIgnoreCase))
+        {
+            return preferred.Trim();
+        }
+
+        return fallback;
     }
 
 
@@ -2854,25 +2993,15 @@ Current supported actions/commands:
 
 
 
-        parseResult.Reply = ResolveAssistantReply(parseResult);
+        parseResult.Reply = SanitizeExternalWebCitations(ResolveAssistantReply(parseResult));
 
-        if (string.IsNullOrWhiteSpace(parseResult.Message))
+        parseResult.Message = string.IsNullOrWhiteSpace(parseResult.Message)
+            ? parseResult.Reply
+            : SanitizeExternalWebCitations(parseResult.Message);
 
-        {
-
-            parseResult.Message = parseResult.Reply;
-
-        }
-
-
-
-        if (string.IsNullOrWhiteSpace(parseResult.AssistantText))
-
-        {
-
-            parseResult.AssistantText = parseResult.Reply;
-
-        }
+        parseResult.AssistantText = string.IsNullOrWhiteSpace(parseResult.AssistantText)
+            ? parseResult.Reply
+            : SanitizeExternalWebCitations(parseResult.AssistantText);
 
     }
 
@@ -3591,7 +3720,7 @@ Current supported actions/commands:
 【当前程序能力概览】
 - SolidWorks 模型：支持打开/查看当前工作模型、重置工作区、查询可编辑桁架构件参数，以及修改已配置杆件（上弦杆、下弦杆、下桁架）的截面宽高和壁厚（所有尺寸修改均需用户确认后再写入）。
 - ANSYS / APDL：程序支持启动已配置的本地 ANSYS APDL 启动器界面（仅打开界面，不自动运行求解器），支持读取模型轻量化基线，也支持在配置好算例文件后运行轻量化对比，并可协助准备分析流程或起草 APDL 脚本。
-- 工程规范知识库：接入了可扩展多标准本地工程规范资料（GB/T 3811-2008、JT/T 1430-2022、GB 50017-2017），规范校核问题由资料通道结合原文依据作答，设计讨论与改模确认前同步结合本车模型与多规范边界预检。
+- 工程规范知识库：接入了 6 本本地工程规范资料（JT/T 1430-2022、GB/T 3811-2008、GB 50017-2017、GB/T 6728-2025、GB/T 1591-2018、GB 50661-2011，含高清矢量工程附图），规范校核问题由资料通道结合原文依据作答，设计讨论与改模确认前同步结合本车模型与多规范边界预检。
 """
             : requestOptions.RuntimeContextSummary.Trim();
 
@@ -3605,8 +3734,16 @@ Current supported actions/commands:
 2. ANSYS / APDL 说明口径：如实区分“启动本地 ANSYS APDL 启动器界面”“批处理求解器路径”“自动轻量化算例文件（StudyFile）是否已配置”三者；若本地启动器已配置，可明确告知用户能直接发“打开 APDL”或“打开仿真软件”启动，但不要把打开启动器说成已连接求解器或已完成仿真。
 3. 严禁虚报执行：在程序真正执行动作并返回结果前，绝对不要说“已打开”“已修改”“已保存”“已完成求解”。
 4. 禁止暴露内部细节：不要编造本机文件路径、草图名、特征名或内部尺寸名；不要指导用户手动扫描尺寸或手动配置内部映射；不要编造与当前桥梁检查车桁架无关的示例参数。
-5. 智能设计顾问准则（紧扣本车模型 + 有具体规范依据）：当用户询问“现在结构尺寸是多少 / 某构件目前多大”时，直接依据上方【当前项目结构截面尺寸状态】明确报出上弦杆和下弦杆的截面尺寸（外宽×外高×壁厚，注意下弦杆与下桁架为同一组构件，对外统一称“下弦杆”），不要推脱说查不到或让用户去发“读取轻量化基线”。当用户询问怎么改、如何轻量化、如何加强或评价某个候选规格/壁厚时，必须**同时结合本车当前真实模型状态**（当前尺寸、上弦斜段受拉/下弦斜段受压分工、上弦横向联动红管长度与通道净宽、主支管与法兰匹配）和上方【本车固定结构基准、实体联动规律与三规范核心边界】/【当前模型实时截面对应的多规范边界核对】中给出的具体规范条款与数值依据（如 GB/T 3811-2008 表34 最小壁厚/表22 许用应力/表28 长细比、GB 50017-2017 表3.5.1/7.3.1/13.1.2 宽厚比与主支管匹配、JT/T 1430-2022 表2 净宽/表3 悬臂挠度 L'/400/附录A 1.5 倍静载）来作答，绝不脱离本车模型泛泛背书；不要用人为写死的窄范围提前限制用户，也不要在尚未运行仿真优化前直接给出“减重 XX% / 刚度提升 XX%”等未经仿真核实的量化减重结论，并引导用户结合后续 ANSYS APDL 仿真校核结果定量定案。
-6. 尊重上下文与去复读（总工口吻）：界面开屏已展示本车实体模型与能力简报；当用户仅打招呼（如“你好”“在吗”）时，禁止再次重复背诵“我是桥梁检查车智能设计助手，可以帮你……”这类套话，应直接结合当前项目名称/版本与实时上、下弦杆截面状态，用 1~2 句精炼、专业的结构总工口吻切入下一步具体建议（如评估下弦杆减薄风险、预检改模或启动 APDL 仿真）；日常多轮对话也应自然衔接上下文，避免机械重复。
+5. 智能设计顾问准则（紧扣本车模型 + 有具体规范依据）：当用户询问“现在结构尺寸是多少 / 某构件目前多大”时，直接依据上方【当前项目结构截面尺寸状态】明确报出上弦杆和下弦杆的截面尺寸（外宽×外高×壁厚，注意下弦杆与下桁架为同一组构件，对外统一称“下弦杆”），不要推脱说查不到或让用户去发“读取轻量化基线”。当用户询问怎么改、如何轻量化、如何加强或评价某个候选规格/壁厚时，必须**同时结合本车当前真实模型状态**（当前尺寸、上弦斜段受拉/下弦斜段受压分工、上弦横向联动红管长度与通道净宽、主支管与法兰匹配）和上方【本车固定结构基准、实体联动规律与多规范核心边界】/【当前模型实时截面对应的多规范边界核对】中给出的具体规范条款与数值依据（如 GB/T 3811-2008 表34 最小壁厚/表22 许用应力/表28 长细比、GB 50017-2017 表3.5.1/7.3.1/13.1.2 宽厚比与主支管匹配、JT/T 1430-2022 表2 净宽/表3 悬臂挠度 L'/400/附录A 1.5 倍静载，以及已挂载的 GB/T 6728-2025、GB/T 1591-2018、GB 50661-2011 规格、材质与焊接构造要求）来作答，绝不脱离本车模型泛泛背书；不要用人为写死的窄范围提前限制用户，也不要在尚未运行仿真优化前直接给出“减重 XX% / 刚度提升 XX%”等未经仿真核实的量化减重结论，并引导用户结合后续 ANSYS APDL 仿真校核结果定量定案。
+6. 友好欢迎导览与多轮去复读：当用户仅礼貌打招呼（如“你好”“您好”“在吗”“hi”）或询问“你能做什么”时，应先以专业友好的智能系统口吻礼貌欢迎，点明“桥梁检查车智能设计助手”身份与已载入的“不可伸缩单层桥梁检查车（JC-GD-NG）”设计上下文，再用清晰精炼的 4 条分项列表概括核心功能（工程规范与附图查证、结构咨询与方案评估、SolidWorks 参数化改模、ANSYS APDL 仿真协同），最后自然询问用户想先从哪一项开始（并提示可点击上方「展开设计简报」使用快捷入口），不要替用户强行预设必须做轻量化；进入后续正式工程多轮对话后，则自然衔接上下文，保持精炼专业的资深结构工程师口吻，避免机械重复自我介绍。
+7. 严禁联网搜索与外部网页链接，严禁否认内置高清附图：所有规范条款、数值与设计边界均以系统已注入的本车模型参数及本地已核验 6 本规范（JT/T 1430-2022、GB/T 3811-2008、GB 50017-2017、GB/T 6728-2025、GB/T 1591-2018、GB 50661-2011，含 19 张已内置高清矢量工程图，其中 GB 50661-2011 含 9 张焊接节点/坡口/焊脚图）为准；禁止声称“没有提供规范插图或图像”（若用户想浏览全部规范图，可引导直接发送“看 GB 50661 规范图”或点击工作台「规范图库」按钮）；绝对禁止触发外部联网检索，绝对禁止在回复中附带任何 http/https 网址、外部域名或 Markdown 网页引用链接（如 `([xxx.gov.cn](https://...))`）。{(requestOptions?.UserImages is { Count: > 0 } attachedVisionImages ? $"""
+
+8. 多模态工程识图与改模安全护栏（本轮用户附带了 {attachedVisionImages.Count} 张工程图片）：
+   - 仔细读取图片中的全部工程文字、尺寸标注、参数表、ANSYS 仿真云图图例（最大应力 SMX/MPa、最大位移 DMX/mm、单位制及高应力集中区）、SolidWorks 特征树/草图或软件报错弹窗。
+   - 必须结合上方【当前项目结构截面尺寸状态】与【多规范核心边界】给出有工程依据的校核结论与改进建议（例如对比 Q355B 许用应力、JT/T 1430 悬臂挠度限值 L'/400、GB/T 3811 最小壁厚与长细比、GB/T 6728 规格与 GB 50661 焊接构造要求）。
+   - 若识别图纸尺寸或参数表，必须先逐条列出从图片读出的构件名称与目标截面数值（外宽×外高×壁厚），提醒用户核对以防图片模糊误读；若关键数字看不清，必须如实说明并请求重传或文字确认，严禁猜数。
+   - 严禁静默改模：除非用户明确下达按图改模指令且读数清晰无歧义，否则不要返回 `update_solidworks_dimensions`；如需改模，系统仍会交由用户点击“确认执行改模”后才会写入模型。
+""" : string.Empty)}
 """;
 
         if (requestOptions?.AllowApdlLauncherAction == true)
@@ -3634,12 +3771,26 @@ Current supported actions/commands:
                 ? "ReplyOnly"
                 : requestOptions.IntentLabel.Trim();
 
+            var greetingGuide = intentLabel.Equals("Greeting", StringComparison.OrdinalIgnoreCase)
+                ? """
+
+- 本轮属于用户礼貌打招呼（Greeting），请按以下专业友好的欢迎结构组织回复（使用简洁 Markdown 加粗与 `- ` 列表，不要输出代码块，不要直接突兀跳入单一轻量化话题）：
+  1. 礼貌欢迎并明确身份与上下文：“您好！欢迎使用**桥梁检查车智能设计助手**，当前已为您载入**不可伸缩单层桥梁检查车（JC-GD-NG）**的设计上下文。我可以协助您完成以下工作：”（若上方实时状态中存在待确认的改模计划，则在首段顺带温和提醒用户可回复“确认修改”或“取消修改”）。
+  2. 用 4 条清晰的分项列表介绍四大核心能力：
+     - **工程规范与附图查证**：检索已挂载的 6 本国标/行标（JT/T 1430、GB/T 3811、GB 50017、GB/T 6728、GB/T 1591、GB 50661）核心条文、公式及高清矢量工程图；
+     - **结构咨询与方案评估**：结合本车当前截面与受力特点，讨论轻量化、刚度、稳定性、焊缝与选材边界；
+     - **SolidWorks 参数化改模**：打开当前工作模型，查询或经您确认后联动修改上/下弦杆截面与壁厚；
+     - **ANSYS APDL 仿真协同**：拉起本地 APDL 启动器界面，辅助梳理校核流程或准备分析脚本。
+  3. 结尾友好引导：“请问您现在想先从哪一项开始？也可以点击上方「展开设计简报」直接使用快捷入口。”
+"""
+                : string.Empty;
+
             return identityAndGroundRules + $"""
 
 本轮输出模式（纯自然语言答复，IntentLabel={intentLabel}）：
 - 本轮不执行任何 SolidWorks 或外部软件动作。
 - 直接输出清晰、自然的中文答复正文即可，不要输出 JSON，不要输出 Markdown 代码块。
-- 若用户询问功能、状态或软件是否支持某能力，直接按实时状态如实回答，并顺手提示下一步可直接输入的命令（如“打开当前模型”“查询可编辑参数”“打开 APDL”“把上弦杆截面改成 60x60”或“把下弦杆改成 70x70x4”等）。
+- 若用户询问功能、状态或软件是否支持某能力，直接按实时状态如实回答，并顺手提示下一步可直接输入的命令（如“打开当前模型”“查询可编辑参数”“打开 APDL”“把上弦杆截面改成 60x60”或“把下弦杆改成 70x70x4”等）。{greetingGuide}
 """;
         }
 

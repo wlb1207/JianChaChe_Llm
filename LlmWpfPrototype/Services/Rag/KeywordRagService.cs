@@ -5,7 +5,7 @@ namespace LlmWpfPrototype.Services.Rag;
 
 public sealed class KeywordRagService
 {
-    private const string VerifiedMarkdownIndexVersion = "multi-standard-kb-v3";
+    private const string VerifiedMarkdownIndexVersion = "multi-standard-kb-v4";
     private static readonly Regex HeadingRegex = new(@"^\s*第.+[章节]\s+.+$", RegexOptions.Compiled);
     private static readonly Regex TokenRegex = new(@"[\u4e00-\u9fa5]{2,}|[A-Za-z0-9/\-\.]{2,}", RegexOptions.Compiled);
     private readonly KnowledgeBaseLoader _knowledgeBaseLoader;
@@ -140,8 +140,9 @@ public sealed class KeywordRagService
             return [];
         }
 
+        var isFigureQuery = LocalKnowledgeEvidenceSelector.IsFigureLookupQuery(query);
         return chunks
-            .Select(chunk => ScoreChunk(chunk, queryTokens))
+            .Select(chunk => ScoreChunk(chunk, queryTokens, isFigureQuery))
             .Where(result => result.Score > 0)
             .OrderByDescending(result => result.Score)
             .ThenBy(result => result.Chunk.Order)
@@ -209,8 +210,9 @@ public sealed class KeywordRagService
                 continue;
             }
 
+            var cleanStandardName = NormalizeStandardBaseName(document.StandardName);
             var keywords = BuildRuleSearchTerms(rule, markdown)
-                .Concat([document.Standard, document.StandardName, document.PackId])
+                .Concat([document.Standard, document.StandardName, cleanStandardName, document.PackId])
                 .Where(term => !string.IsNullOrWhiteSpace(term))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -341,7 +343,19 @@ public sealed class KeywordRagService
         }
     }
 
-    private static RagSearchResult ScoreChunk(RagDocumentChunk chunk, IReadOnlyList<string> queryTokens)
+    internal static string NormalizeStandardBaseName(string? standardName)
+    {
+        if (string.IsNullOrWhiteSpace(standardName))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = standardName.Trim();
+        var parenIdx = trimmed.IndexOfAny(['（', '(']);
+        return (parenIdx > 0 ? trimmed[..parenIdx] : trimmed).Trim();
+    }
+
+    private static RagSearchResult ScoreChunk(RagDocumentChunk chunk, IReadOnlyList<string> queryTokens, bool isFigureQuery = false)
     {
         var matchedKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         double score = 0;
@@ -393,7 +407,7 @@ public sealed class KeywordRagService
             if (chunk.Keywords.Any(keyword => string.Equals(keyword, token, StringComparison.OrdinalIgnoreCase)))
             {
                 matchedKeywords.Add(token);
-                score += 2.5;
+                score += token.Length >= 6 ? 10 : 2.5;
             }
 
             if (chunk.MustRequire.Any(item => item.Contains(token, StringComparison.OrdinalIgnoreCase)))
@@ -419,6 +433,11 @@ public sealed class KeywordRagService
                 matchedKeywords.Add(token);
                 score += 1.5;
             }
+        }
+
+        if (isFigureQuery && score > 0 && chunk.Text.Contains("/assets/", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 4;
         }
 
         return new RagSearchResult

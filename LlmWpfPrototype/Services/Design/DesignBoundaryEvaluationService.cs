@@ -41,7 +41,11 @@ public sealed record DesignBoundaryEvaluationResult(
     string WidthThicknessSummary,
     string ModelLinkageSummary,
     string SimulationChecklistSummary,
-    IReadOnlyList<string> Highlights)
+    IReadOnlyList<string> Highlights,
+    GbT6728RoundedSectionResult? RoundedSection = null,
+    string StandardSectionSummary = "",
+    string WeldingDetailingSummary = "",
+    string SteelMaterialSummary = "")
 {
     public bool HasBoundaryWarning =>
         !Mechanics.IsGeometryValid ||
@@ -277,11 +281,41 @@ public static class DesignBoundaryEvaluationService
         var simulationChecklistSummary =
             $"{roleFocus}；后续 ANSYS APDL 仿真必复核：① {vehicle.CantileverLengthMm / 1000m:0.00} m 悬臂端静挠度 ≤{cantileverLimitJtt:0.#} mm（{jtt1430.StandardCode} 表3 L'/400，严于 {gb3811.StandardCode} L₁/350≈{cantileverLimit3811:0.#} mm）及 {vehicle.GantryRailCenterSpacingMm / 1000m:0.00} m 跨中挠度 ≤{midspanLimitJtt:0.#} mm（L/800）；② {vehicle.MaterialGrade} 静强度许用应力（{gb3811.StandardCode} 表22/式28 保守值：组合A ≈{allowableComboA:0.#} MPa、组合B ≈{allowableComboB:0.#} MPa）；③ {jtt1430.StandardCode} 附录A {jtt1430.DynamicTestLoadFactor:0.##} 倍动载与 {jtt1430.StaticCapacityTestLoadFactor:0.##} 倍静载承载工况（卸载无残余变形）。";
 
+        // 5. GB/T 6728-2025 standard hollow section catalog + rounded-corner mechanics + Table B.1 wall tolerance
+        var rounded = GbT6728SectionCatalogService.Evaluate(widthMm, heightMm, thicknessMm);
+        var catalogStatus = rounded.IsStandardCatalogSpec
+            ? "属 GB/T 6728-2025 表1/表2 标准冷弯闭口型钢规格（可直接常规采购）"
+            : rounded.NearestStandardSpecs.Count > 0
+                ? $"非 GB/T 6728-2025 表1/表2 常用标准规格（须协议订货，最接近国标推荐：{string.Join(" 或 ", rounded.NearestStandardSpecs)}）"
+                : "非 GB/T 6728-2025 常用标准规格（须协议订货）";
+        var negativeTolNote = rounded.MinAllowableWallMm < gb3811.ClosedSectionMinWallModerateMm
+            ? $"（注意：扣减表B.1 负偏差 -{rounded.WallToleranceMm:0.00} mm 后实测下限 {rounded.MinAllowableWallMm:0.00} mm < 4 mm，入厂复检须关注壁厚下限与防腐裕量）"
+            : $"（表B.1 壁厚偏差 ±{rounded.WallToleranceMm:0.00} mm，负偏差下限 {rounded.MinAllowableWallMm:0.00} mm）";
+        var standardSectionSummary =
+            $"{catalogStatus}；计入公称外圆弧 R={rounded.NominalOuterRadiusMm:0.#} mm（表4 Q355B 范围 {rounded.LowAlloyCornerRadiusRangeText}）后精确特性：A={rounded.RoundedAreaCm2:0.000} cm²、M={rounded.RoundedLineMassKgPerM:0.000} kg/m、Ix={rounded.RoundedIxCm4:0.000} cm⁴{negativeTolNote}";
+
+        // 6. GB 50661-2011 welding detailing & minimum fillet / thickness transition checks
+        var dynMinFillet = thicknessMm <= 6m ? Math.Min(5m, thicknessMm) : (thicknessMm <= 12m ? 5m : 6m);
+        var edgeMaxFilletText = thicknessMm <= 6m
+            ? $"沿母材棱边最大焊脚 ≤t={thicknessMm:0.##} mm（5.4.3）"
+            : $"沿母材棱边最大焊脚 ≤t-(1~2) mm={thicknessMm - 2m:0.##}~{thicknessMm - 1m:0.##} mm（5.4.3）";
+        var transitionAllowedDiff = thicknessMm < 5m ? 2m : (thicknessMm <= 9m ? 2m : (thicknessMm <= 12m ? 3m : 4m));
+        var weldingDetailingSummary =
+            $"动载桁架角焊缝最小焊脚 hf≥{dynMinFillet:0.##} mm（表5.4.2，不超过较薄板厚，静载 t≤6 mm 可为 3 mm）、{edgeMaxFilletText}；相贯节点角焊缝计算厚度按 he=min(tc, 1.07tb) 核对（表5.3.6-2）；与折线法兰或厚板对接若厚度差 >{transitionAllowedDiff:0.#} mm 须按 1:2.5 平缓过渡（表5.4.4）";
+
+        // 7. GB/T 1591-2018 Q355 steel grade, CEV & low-temperature impact check
+        var yieldByThickness = thicknessMm <= 16m ? "≥355 MPa" : "≥345 MPa";
+        var steelMaterialSummary =
+            $"{vehicle.MaterialGrade}（t={thicknessMm:0.##} mm，GB/T 1591-2018 表7 上屈服 ReH {yieldByThickness}、表2 碳当量 CEV≤0.45%）；常温/温暖地区采用 Q355B（表11 +20℃ KV2≥34 J），若服役桥位冬季最低温低于 0℃/-20℃ 建议升级 Q355C/D/ND 并按 7.4.2.2 核对薄壁试样要求";
+
         var highlights = new List<string>
         {
             $"模型联动：{modelLinkageSummary}。",
             $"最小壁厚（{gb3811.StandardCode} 表34）：{wallSummary}。",
             $"宽厚比与局部稳定（{gb50017.StandardCode}）：{widthThicknessSummary}。",
+            $"国标型钢与含圆角特性（GB/T 6728-2025）：{standardSectionSummary}。",
+            $"焊接构造边界（GB 50661-2011）：{weldingDetailingSummary}。",
+            $"材质与低温冲击（GB/T 1591-2018）：{steelMaterialSummary}。",
             $"仿真必复核红线：{simulationChecklistSummary}"
         };
 
@@ -307,7 +341,11 @@ public static class DesignBoundaryEvaluationService
             WidthThicknessSummary: widthThicknessSummary,
             ModelLinkageSummary: modelLinkageSummary,
             SimulationChecklistSummary: simulationChecklistSummary,
-            Highlights: highlights);
+            Highlights: highlights,
+            RoundedSection: rounded,
+            StandardSectionSummary: standardSectionSummary,
+            WeldingDetailingSummary: weldingDetailingSummary,
+            SteelMaterialSummary: steelMaterialSummary);
     }
 
     public static string FormatCompactPreConfirmationBlock(IReadOnlyList<DesignBoundaryEvaluationResult> evaluations)

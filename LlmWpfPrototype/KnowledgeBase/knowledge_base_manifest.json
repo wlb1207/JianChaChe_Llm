@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "generatedAtUtc": "2026-11-26T07:26:09Z",
-  "packCount": 3,
-  "totalRuleCount": 32,
+  "generatedAtUtc": "2026-11-27T05:18:06Z",
+  "packCount": 6,
+  "totalRuleCount": 43,
   "packs": [
     {
       "packId": "GB_T_3811_2008",
@@ -43,7 +43,7 @@
           "sourceDocument": "verified/04_fatigue_check.md",
           "topic": "结构疲劳强度校核（应力比法与附录O）",
           "clause": "5.8, 表31, 表32, 表33, 附录O, 表O.1, 表O.2",
-          "sha256": "2130305CDCDE93D8E08F673C439B3A51DBCB8E51EB589B3C1C687AFFDDE40308"
+          "sha256": "366CB1149BD3169DE247F436D1EA632B10E7ABCDBF9BE9B527E4C6083B4207F6"
         },
         {
           "id": "GB3811-05",
@@ -131,7 +131,7 @@
           "sourceDocument": "verified/15_wheel_rail_and_mechanical_parts.md",
           "topic": "车轮轨道轮压、防打滑黏着系数与通用机械零件强度",
           "clause": "6.1.2.7, 6.2.1-6.2.4, 6.3.4, 表21, 表42, 表46-表49, 式97-式99, 式130-式133",
-          "sha256": "BA16F624F236F4C8976964560759CA28BDAF70E422578B643C11933B5B06A516"
+          "sha256": "D3B9A071E2D11D9C4EDC70E2C1FF526822D038A8411A03D1B2CB6CD0A4B09842"
         },
         {
           "id": "GB3811-16",
@@ -139,7 +139,7 @@
           "sourceDocument": "verified/16_structural_safety_clearance_and_guardrails.md",
           "topic": "结构安全要求、限界净距、平台荷载与栏杆刚度",
           "clause": "9.2.2, 9.3.2, 9.3.3, 9.3.4, 表56, 式146",
-          "sha256": "41BC98A3DD1DDE90F74F4F1B2F791A43D37F3BD03EB3261AD0CBC1528DA1FDAB"
+          "sha256": "80ADB935952CE65EAA98BE169A5952E415E31F763DABDF4D0BAF62DA97BB5469"
         }
       ],
       "looseMarkdownFiles": [
@@ -171,7 +171,7 @@
           "sourceDocument": "GB_50017_2017/verified/02_section_width_thickness_class.md",
           "topic": "截面板件宽厚比等级与箱形截面局部稳定限值",
           "clause": "3.5, 表3.5.1, 表3.5.2, 7.3.1, 7.3.4",
-          "sha256": "1857B9B4FEFEDE2351015B5CE555F4B2ECC875FAC2630E3C53C5D66BCEDA121B"
+          "sha256": "A8A5C9164B6416F1E59FC0603E352E8E2FD41FA0766EB47F4AE92EA3004FCC0F"
         },
         {
           "id": "GB50017-03",
@@ -195,7 +195,7 @@
           "sourceDocument": "GB_50017_2017/verified/05_axial_members_and_slenderness.md",
           "topic": "轴心受力构件稳定、钢管桁架计算长度与容许长细比",
           "clause": "7.1, 7.2, 7.3, 7.4, 表7.2.1-1, 表7.4.1-2, 表7.4.6, 表7.4.7",
-          "sha256": "67E1AA28968D7BE445814B7E9BE0D9D1E48B838DE32E7582B50BD3B982F0D6A0"
+          "sha256": "976F3DCEBBBD485E109D7B20A33746BAB20DF7CDE32579C52CD0F17B2829BFA4"
         },
         {
           "id": "GB50017-06",
@@ -227,7 +227,7 @@
           "sourceDocument": "GB_50017_2017/verified/09_hollow_section_tube_joints.md",
           "topic": "矩形钢管与方管桁架直接焊接节点构造及计算",
           "clause": "13.1, 13.2, 13.4, 表13.4.1",
-          "sha256": "E0EC84ABA7E7BDE77FAEAA9304394FC7184ADFE2A19845933D464F6A60FBF195"
+          "sha256": "CEF4B596286BA7121BC9DC2AAA93DB2FA5D5A34D275A8496206DEB2A1C4D7C35"
         },
         {
           "id": "GB50017-10",
@@ -236,6 +236,130 @@
           "topic": "疲劳容许应力幅、低温防脆断与闭口截面防腐蚀设计",
           "clause": "16.1, 16.2, 16.3, 16.4, 18.2, 表16.2.1-1, 表16.2.4",
           "sha256": "72CBD24E8C7FEE96C04DC3D399827B76C08714E7240426394B64E407BB8C3F44"
+        }
+      ],
+      "looseMarkdownFiles": []
+    },
+    {
+      "packId": "GB_50661_2011",
+      "standard": "GB 50661-2011",
+      "name": "钢结构焊接规范（方矩管构造与检验核心版）",
+      "description": "GB 50661-2011 钢结构焊接规范核心构造与检验知识规则索引，聚焦桥梁检查车方矩管焊接桁架的焊缝质量等级选用、对接/角焊/斜角焊计算厚度、矩形管T/Y/K相贯节点焊缝分区与最小焊脚、搭接与不等厚过渡、外观质量要求及高清增强构造附图。",
+      "rulesFile": "GB_50661_2011/gb_50661_key_rules.json",
+      "ruleCount": 4,
+      "looseMarkdownCount": 0,
+      "rules": [
+        {
+          "id": "GB50661-01",
+          "chunkId": "gb_50661_2011-rule-0001",
+          "sourceDocument": "GB_50661_2011/verified/01_weld_quality_grades_and_designations.md",
+          "topic": "焊接连接构造一般规定、焊缝质量等级选用与管节点坡口代号",
+          "clause": "5.1.1-5.1.5, 5.2.1-5.2.2, 表5.2.1-1至表5.2.1-5, 图5.2.1",
+          "sha256": "EC584F29A1B5F7A2671E7C1EF1A11116B34ED07C2AD82127699B71A98B51F061"
+        },
+        {
+          "id": "GB50661-02",
+          "chunkId": "gb_50661_2011-rule-0002",
+          "sourceDocument": "GB_50661_2011/verified/02_weld_effective_throat_calculation.md",
+          "topic": "对接、组合、直角与斜角角焊缝计算厚度及锐角折减值z",
+          "clause": "5.3.1, 5.3.2, 5.3.3, 5.3.4, 表5.3.2, 表5.3.4, 图5.3.1至图5.3.4",
+          "sha256": "CE9566DB9C27FC39EBE314256979B8DFCD524B37DA546A87AA025EE34C38E867"
+        },
+        {
+          "id": "GB50661-03",
+          "chunkId": "gb_50661_2011-rule-0003",
+          "sourceDocument": "GB_50661_2011/verified/03_hollow_section_tube_joint_welds.md",
+          "topic": "矩形管与方管T、Y、K形相贯节点焊缝分区、全焊透与角焊缝计算厚度",
+          "clause": "5.3.6, 续表5.3.6-1, 表5.3.6-2, 图5.3.6-1, 图5.3.6-3, 图5.3.6-5",
+          "sha256": "207A20904FD406C2F8444B422D573DF37D49FF8A8DDAF7BC337DE66BF7A67B85"
+        },
+        {
+          "id": "GB50661-04",
+          "chunkId": "gb_50661_2011-rule-0004",
+          "sourceDocument": "GB_50661_2011/verified/04_fillet_size_lap_transition_and_inspection.md",
+          "topic": "角焊缝最小焊脚尺寸、搭接与不等厚对接过渡、焊接检验与外观质量（表8.2.1）",
+          "clause": "5.4.2-5.4.4, 8.1.1-8.1.9, 8.2.1, 表5.4.2, 表5.4.4, 表8.2.1, 图5.4.3, 图5.4.4",
+          "sha256": "879217CD8EDFF1F8AC96ECFCEEB6BD966C7436E4D26D1E8DFFB4E22A51B2132B"
+        }
+      ],
+      "looseMarkdownFiles": []
+    },
+    {
+      "packId": "GB_T_1591_2018",
+      "standard": "GB/T 1591-2018",
+      "name": "低合金高强度结构钢",
+      "description": "GB/T 1591-2018 低合金高强度结构钢核心材料知识规则索引，聚焦桥梁检查车主体钢材 Q355（B/C/D/E）及 Q390/Q420 比选的牌号表示、交货状态、化学成分、碳当量（CEV/Pcm）、厚度分组拉伸力学性能、夏比低温冲击功及检验验收边界。",
+      "rulesFile": "GB_T_1591_2018/gb_t_1591_key_rules.json",
+      "ruleCount": 3,
+      "looseMarkdownCount": 0,
+      "rules": [
+        {
+          "id": "GB1591-01",
+          "chunkId": "gb_t_1591_2018-rule-0001",
+          "sourceDocument": "GB_T_1591_2018/verified/01_grade_designation_and_chemical_composition.md",
+          "topic": "牌号表示方法、Q355替代Q345变更、化学成分与碳当量（CEV与Pcm）",
+          "clause": "前言, 3.1-3.4, 4.1-4.2, 7.1, 7.3, 表1, 表2, 表3, 表4, 表5, 表6, 附录A",
+          "sha256": "0D6FC6F83CAE6490D4E78409A04D1BAA93216F9242B95434F57DE2DE126253C7"
+        },
+        {
+          "id": "GB1591-02",
+          "chunkId": "gb_t_1591_2018-rule-0002",
+          "sourceDocument": "GB_T_1591_2018/verified/02_mechanical_properties_tensile_and_bending.md",
+          "topic": "Q355、Q390、Q420拉伸力学性能（屈服强度、抗拉强度、伸长率）与弯曲试验",
+          "clause": "7.4.1, 7.4.3, 表7, 表8, 表9, 表10, 表12",
+          "sha256": "5E70E98C691C268B4739A963C7E8C6B0A59B8858CA0CCDDC64CC13237178A1D9"
+        },
+        {
+          "id": "GB1591-03",
+          "chunkId": "gb_t_1591_2018-rule-0003",
+          "sourceDocument": "GB_T_1591_2018/verified/03_impact_toughness_surface_and_inspection.md",
+          "topic": "夏比V型缺口低温冲击吸收能量（表11）、表面质量与检验验收规则",
+          "clause": "7.4.2, 7.5, 7.6, 8.1-8.3, 9.2-9.5, 表11, 表13",
+          "sha256": "2A9B220887CD0B8B2325E786CD7E6A390DF64EE3CDD845EAB199CEE477DB904E"
+        }
+      ],
+      "looseMarkdownFiles": []
+    },
+    {
+      "packId": "GB_T_6728_2025",
+      "standard": "GB/T 6728-2025",
+      "name": "结构用冷弯型钢（闭口方矩管核心版）",
+      "description": "GB/T 6728-2025 结构用冷弯型钢核心闭口方矩管知识规则索引（代替 GB/T 6728-2017 与 GB/T 6723-2017），聚焦桥梁检查车常用冷弯方形/矩形闭口型钢规格与截面特性表、外圆弧半径与壁厚公差、附录A计算公式及成品力学与焊缝镀锌质量边界。",
+      "rulesFile": "GB_T_6728_2025/gb_t_6728_key_rules.json",
+      "ruleCount": 4,
+      "looseMarkdownCount": 0,
+      "rules": [
+        {
+          "id": "GB6728-01",
+          "chunkId": "gb_t_6728_2025-rule-0001",
+          "sourceDocument": "GB_T_6728_2025/verified/01_square_hollow_sections.md",
+          "topic": "冷弯方形闭口型钢（方管）常用规格、尺寸允许偏差与截面特性",
+          "clause": "5.1, 6.1.1.1, 表1",
+          "sha256": "B4CE60F237203E1ACF74245FE2A177C4B110F66FCB96A567F46DB4FE3AC7E3DD"
+        },
+        {
+          "id": "GB6728-02",
+          "chunkId": "gb_t_6728_2025-rule-0002",
+          "sourceDocument": "GB_T_6728_2025/verified/02_rectangular_hollow_sections.md",
+          "topic": "冷弯矩形闭口型钢（矩管）常用规格、尺寸允许偏差与截面特性",
+          "clause": "5.1, 6.1.1.2, 表2",
+          "sha256": "232C528C8E31DF37495907D1B3879FFE05E034CEE942F959238B98BC7D5AD1E9"
+        },
+        {
+          "id": "GB6728-03",
+          "chunkId": "gb_t_6728_2025-rule-0003",
+          "sourceDocument": "GB_T_6728_2025/verified/03_tolerances_corner_radius_and_formulas.md",
+          "topic": "方矩管外圆弧半径、壁厚与外形公差及截面特性计算公式",
+          "clause": "6.1.1.4-6.1.1.9, 6.2.1, 6.3.1, 6.4, 表4, 表5, 表21, 表23, 附录A(表A.2), 附录B(表B.1)",
+          "sha256": "537890E96F91CCE24365F2F698270128F60D8C6BD227291A141CC24505359619"
+        },
+        {
+          "id": "GB6728-04",
+          "chunkId": "gb_t_6728_2025-rule-0004",
+          "sourceDocument": "GB_T_6728_2025/verified/04_material_mechanical_and_weld_quality.md",
+          "topic": "冷弯闭口型钢牌号、力学性能、焊缝与热浸镀锌质量要求",
+          "clause": "1, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11, 7.3, 8.2, 表25, 表26",
+          "sha256": "14EE57790F4A0CF52D31F044CD7D1F243932E93694B34619F4EE136086D47F66"
         }
       ],
       "looseMarkdownFiles": []
@@ -263,7 +387,7 @@
           "sourceDocument": "JT_T_1430_2022/verified/02_deflection_and_load_capacity.md",
           "topic": "检查车竖向挠度限值、承载能力与抗风能力",
           "clause": "5.1.1, 5.1.2, 5.1.3, 5.1.4, 表3",
-          "sha256": "C96719D3189914E37628239DCEFE54288C9065A27FDA31656284B1F49D109027"
+          "sha256": "0732207E9A0BB4E7639788B3D58B6425E44482683F76300F5AC48547F5FADE29"
         },
         {
           "id": "JT1430-03",
@@ -295,7 +419,7 @@
           "sourceDocument": "JT_T_1430_2022/verified/06_test_methods_and_wind_test.md",
           "topic": "检查车试验工况、1.25倍动载、1.5倍静载与抗风试验",
           "clause": "7, 附录A, 附录B",
-          "sha256": "2D73819698CCECC242EFA4E2D44BC6B59E020292EB0DA7410692E1AD654F7280"
+          "sha256": "F977437C4042549A923A44877740458A4AF2CF69F7F572EED4C4EEFE803FE4A1"
         }
       ],
       "looseMarkdownFiles": []

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -6,12 +7,17 @@ using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using LlmWpfPrototype.Services.Rag;
 using Binding = System.Windows.Data.Binding;
 using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
+using Cursors = System.Windows.Input.Cursors;
 using FontFamily = System.Windows.Media.FontFamily;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using Image = System.Windows.Controls.Image;
+using Orientation = System.Windows.Controls.Orientation;
 
 namespace LlmWpfPrototype.Presentation;
 
@@ -34,6 +40,9 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
     private static readonly Regex Heading = new(@"^[ \t]{0,3}#{1,6}[ \t]+(?<body>\S.*)$");
     private static readonly Regex ListItem = new(@"^[ \t]*(?<mark>[-*+•]|\d{1,6}[.)])[ \t]+(?<body>\S.*)$");
     private static readonly Regex BlockQuoteLine = new(@"^[ \t]*>[ \t]?(?<body>.*)$");
+    private static readonly Regex LocalMarkdownImageLine = new(
+        @"^[ \t]*!\[(?<alt>[^\]\r\n]{1,180})\]\((?<path>[A-Za-z0-9_-]+/assets/[A-Za-z0-9_]+\.png)\)[ \t]*\r?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex HorizontalRule = new(@"^[ \t]*(?:[-*_][ \t]*){3,}$");
     private static readonly Regex TableSeparatorLine = new(
         @"^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(?:\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*$",
@@ -48,9 +57,13 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         @"(?:标准|条款)\s*\d+(?:\.\d+)+|附录\s*[A-Z](?![A-Za-z0-9])");
     private static readonly Regex PageReference = new(
         @"第\s*\d+(?:\s*[-–—至]\s*\d+)?\s*页");
+    private static readonly Regex OpenAiWebCitationNoise = new(
+        @"[ \t]*[\(（]\s*(?:\[[^\]\r\n]{1,160}\]\(\s*https?://[^)\r\n\s]*utm_source=[^)\r\n\s]*\s*\)(?:[\s,，、;；]*))+\s*[\)）]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex InlineToken = new(
         @"(?<formula>\\\([^\r\n]*?\\\)|\\\[[^\r\n]*?\\\]|\$\$[^\r\n]+?\$\$|(?<![\\$A-Za-z0-9])\$(?![$\s])[^\r\n$]*?(?<![\s\\])\$(?![$A-Za-z0-9]))"
         + @"|(?<code>`[^`\r\n]+`)|(?<strong>\*\*(?<stars>\S(?:.*?\S)?)\*\*|__(?<underscores>\S(?:.*?\S)?)__)"
+        + @"|(?<link>\[(?<linkText>[^\]\r\n]{1,160})\]\(\s*(?<linkUrl>https?://[^)\r\n\s]+)\s*\))"
         + @"|(?<citation>(?<!\\)\[(?<id>E[0-9]+)\])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly FontFamily MathFont = new("Cambria Math");
@@ -134,6 +147,8 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         var document = new FlowDocument { PagePadding = new Thickness(0), LineHeight = 22 };
         var sources = (citations ?? []).ToDictionary(source => source.Id, StringComparer.OrdinalIgnoreCase);
         var normalized = text.ReplaceLineEndings("\n");
+        if (normalized.Contains("utm_source=", StringComparison.OrdinalIgnoreCase))
+            normalized = OpenAiWebCitationNoise.Replace(normalized, string.Empty);
         if (hideSourceReferences)
             normalized = HideReferencesInDisplay(normalized);
         var start = 0;
@@ -218,6 +233,17 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
                 document.Blocks.Add(BuildTable(headerCells, alignments, dataRows, sources));
                 afterBlank = false;
                 i = rowIndex - 1;
+                continue;
+            }
+
+            // Detect safe local knowledge-base figure (![caption](PACK_ID/assets/figure.png))
+            var imageMatch = LocalMarkdownImageLine.Match(line);
+            if (imageMatch.Success)
+            {
+                var altText = imageMatch.Groups["alt"].Value.Trim();
+                var relativeAssetPath = imageMatch.Groups["path"].Value.Trim();
+                document.Blocks.Add(BuildLocalFigureBlock(altText, relativeAssetPath));
+                afterBlank = false;
                 continue;
             }
 
@@ -440,6 +466,20 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
                 AddInlines(bold.Inlines, content.Value, sources, allowBold: false);
                 target.Add(bold);
             }
+            else if (match.Groups["link"].Success)
+            {
+                var label = match.Groups["linkText"].Value.Trim();
+                var url = match.Groups["linkUrl"].Value.Trim();
+                if (!url.Contains("utm_source=", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(label))
+                {
+                    target.Add(new Run(label)
+                    {
+                        Foreground = CitationBrush,
+                        TextDecorations = TextDecorations.Underline,
+                        ToolTip = url
+                    });
+                }
+            }
             else if (match.Groups["citation"].Success)
             {
                 var id = match.Groups["id"].Value;
@@ -448,7 +488,7 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
                 {
                     Foreground = found ? CitationBrush : Brushes.Firebrick,
                     FontWeight = FontWeights.SemiBold,
-                    ToolTip = found ? source!.Source.Title : "该编号不对应本轮资料"
+                    ToolTip = found ? $"{source!.StandardLabel} · {source.Source.Title}" : "该编号不对应本轮资料"
                 };
                 target.Add(citation);
             }
@@ -478,6 +518,446 @@ public sealed class RagFormattedText : System.Windows.Controls.RichTextBox
         target.Add(new Run(token));
     }
 
+    private static Block BuildLocalFigureBlock(string altText, string relativeAssetPath)
+    {
+        var fullPath = TryResolveSafeKnowledgeAssetPath(relativeAssetPath);
+        if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+        {
+            var fallback = new Paragraph
+            {
+                Margin = new Thickness(0, 4, 0, 6),
+                Foreground = BrushFromRgb(71, 85, 105),
+                FontSize = 12.5
+            };
+            fallback.Inlines.Add(new Run($"〔规范附图：{altText}〕"));
+            return fallback;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            bitmap.UriSource = new Uri(fullPath, UriKind.Absolute);
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            var imageControl = new Image
+            {
+                Source = bitmap,
+                Stretch = Stretch.Uniform,
+                MaxHeight = 360,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Cursor = Cursors.Hand,
+                ToolTip = $"{altText}（点击放大查看高清附图）"
+            };
+            RenderOptions.SetBitmapScalingMode(imageControl, BitmapScalingMode.HighQuality);
+            imageControl.MouseLeftButtonUp += (_, args) =>
+            {
+                args.Handled = true;
+                ShowZoomableFigureWindow(altText, bitmap);
+            };
+
+            var caption = new TextBlock
+            {
+                Text = $"{altText}  ·  点击图片放大查看",
+                Margin = new Thickness(0, 6, 0, 0),
+                FontSize = 12,
+                Foreground = BrushFromRgb(71, 85, 105),
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap
+            };
+
+            var stack = new StackPanel { Orientation = Orientation.Vertical };
+            stack.Children.Add(imageControl);
+            stack.Children.Add(caption);
+
+            var card = new Border
+            {
+                Background = Brushes.White,
+                BorderBrush = TableBorderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 4, 0, 8),
+                Child = stack
+            };
+
+            return new BlockUIContainer(card)
+            {
+                Margin = new Thickness(0, 4, 0, 8)
+            };
+        }
+        catch
+        {
+            var fallback = new Paragraph
+            {
+                Margin = new Thickness(0, 4, 0, 6),
+                Foreground = BrushFromRgb(71, 85, 105),
+                FontSize = 12.5
+            };
+            fallback.Inlines.Add(new Run($"〔规范附图：{altText}〕"));
+            return fallback;
+        }
+    }
+
+    public static bool OpenLocalKnowledgeFigurePreview(string title, string relativeAssetPath)
+    {
+        var bitmap = TryLoadKnowledgeFigureBitmap(relativeAssetPath);
+        if (bitmap is null)
+        {
+            return false;
+        }
+
+        ShowZoomableFigureWindow(title, bitmap);
+        return true;
+    }
+
+    internal static BitmapSource? TryLoadKnowledgeFigureBitmap(string? relativeAssetPath, int decodePixelWidth = 0)
+    {
+        var fullPath = TryResolveSafeKnowledgeAssetPath(relativeAssetPath ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            if (decodePixelWidth > 0)
+            {
+                bitmap.DecodePixelWidth = decodePixelWidth;
+            }
+            bitmap.UriSource = new Uri(fullPath, UriKind.Absolute);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            return bitmap;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static void OpenKnowledgeFigureGalleryWindow(IReadOnlyList<LocalKnowledgeFigureItem> figures)
+    {
+        if (figures.Count == 0)
+        {
+            return;
+        }
+
+        var groups = figures
+            .Select(f => f.StandardLabel)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var activeFilter = "全部";
+
+        var filterPanel = new WrapPanel { Margin = new Thickness(14, 10, 14, 8) };
+        var cardsPanel = new WrapPanel { Margin = new Thickness(14, 6, 14, 14) };
+
+        void RebuildCards()
+        {
+            cardsPanel.Children.Clear();
+            var visible = string.Equals(activeFilter, "全部", StringComparison.Ordinal)
+                ? figures
+                : figures.Where(f => string.Equals(f.StandardLabel, activeFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            foreach (var fig in visible)
+            {
+                var thumb = TryLoadKnowledgeFigureBitmap(fig.RelativeAssetPath, decodePixelWidth: 560);
+                var img = new Image
+                {
+                    Source = thumb,
+                    Stretch = Stretch.Uniform,
+                    MaxWidth = 310,
+                    MaxHeight = 190,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+                RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+
+                var badge = new Border
+                {
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(6, 1.5, 6, 1.5),
+                    CornerRadius = new CornerRadius(5),
+                    Background = BrushFromRgb(224, 242, 254),
+                    BorderBrush = BrushFromRgb(186, 230, 253),
+                    BorderThickness = new Thickness(1),
+                    Margin = new Thickness(0, 0, 0, 6),
+                    Child = new TextBlock
+                    {
+                        Text = fig.StandardLabel,
+                        FontSize = 11,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = BrushFromRgb(3, 105, 161)
+                    }
+                };
+
+                var titleBlock = new TextBlock
+                {
+                    Text = fig.Title,
+                    Margin = new Thickness(0, 8, 0, 2),
+                    FontSize = 12,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = BrushFromRgb(15, 23, 42),
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 310
+                };
+
+                var cue = new TextBlock
+                {
+                    Text = "点击查看大图（支持 Ctrl + 滚轮缩放）",
+                    FontSize = 11,
+                    Foreground = BrushFromRgb(2, 132, 199)
+                };
+
+                var body = new StackPanel();
+                body.Children.Add(badge);
+                body.Children.Add(new Border
+                {
+                    Background = Brushes.White,
+                    BorderBrush = BrushFromRgb(226, 232, 240),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(6),
+                    MinHeight = 150,
+                    Child = img
+                });
+                body.Children.Add(titleBlock);
+                body.Children.Add(cue);
+
+                var cardBtn = new System.Windows.Controls.Button
+                {
+                    Width = 340,
+                    Margin = new Thickness(0, 0, 12, 12),
+                    Padding = new Thickness(11, 9, 11, 9),
+                    Background = Brushes.White,
+                    BorderBrush = BrushFromRgb(203, 213, 225),
+                    BorderThickness = new Thickness(1),
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    VerticalContentAlignment = VerticalAlignment.Top,
+                    Cursor = Cursors.Hand,
+                    Content = body
+                };
+                var captured = fig;
+                cardBtn.Click += (_, _) => OpenLocalKnowledgeFigurePreview(captured.Title, captured.RelativeAssetPath);
+                cardsPanel.Children.Add(cardBtn);
+            }
+        }
+
+        void RebuildFilters()
+        {
+            filterPanel.Children.Clear();
+            var allLabels = new List<(string Key, string Label)> { ("全部", $"全部（{figures.Count}）") };
+            foreach (var g in groups)
+            {
+                var count = figures.Count(f => string.Equals(f.StandardLabel, g, StringComparison.OrdinalIgnoreCase));
+                allLabels.Add((g, $"{g}（{count}）"));
+            }
+
+            foreach (var (key, label) in allLabels)
+            {
+                var selected = string.Equals(activeFilter, key, StringComparison.OrdinalIgnoreCase);
+                var pill = new System.Windows.Controls.Button
+                {
+                    Content = label,
+                    Margin = new Thickness(0, 0, 8, 6),
+                    Padding = new Thickness(10, 4, 10, 4),
+                    FontSize = 12,
+                    FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal,
+                    Foreground = selected ? Brushes.White : BrushFromRgb(51, 65, 85),
+                    Background = selected ? BrushFromRgb(2, 132, 199) : Brushes.White,
+                    BorderBrush = selected ? BrushFromRgb(2, 132, 199) : BrushFromRgb(203, 213, 225),
+                    BorderThickness = new Thickness(1),
+                    Cursor = Cursors.Hand
+                };
+                var capturedKey = key;
+                pill.Click += (_, _) =>
+                {
+                    activeFilter = capturedKey;
+                    RebuildFilters();
+                    RebuildCards();
+                };
+                filterPanel.Children.Add(pill);
+            }
+        }
+
+        RebuildFilters();
+        RebuildCards();
+
+        var scroller = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = cardsPanel
+        };
+
+        var root = new DockPanel { Background = BrushFromRgb(248, 250, 252) };
+        DockPanel.SetDock(filterPanel, Dock.Top);
+        root.Children.Add(filterPanel);
+        root.Children.Add(scroller);
+
+        var galleryWindow = new Window
+        {
+            Title = $"本地工程规范高清矢量图库（共 {figures.Count} 张）",
+            Width = Math.Min(1140, SystemParameters.WorkArea.Width * 0.88),
+            Height = Math.Min(820, SystemParameters.WorkArea.Height * 0.86),
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            Background = BrushFromRgb(248, 250, 252),
+            Content = root
+        };
+        galleryWindow.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+            {
+                galleryWindow.Close();
+            }
+        };
+        galleryWindow.Show();
+    }
+
+    internal static string? TryResolveSafeKnowledgeAssetPath(string relativeAssetPath)
+    {
+        if (string.IsNullOrWhiteSpace(relativeAssetPath) ||
+            relativeAssetPath.Contains("..", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var normalizedRel = relativeAssetPath.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+        var kbRoot = new KnowledgeBaseLoader().ResolveKnowledgeBaseRootPath();
+        var fullRoot = Path.GetFullPath(kbRoot);
+        var rootWithSep = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
+        var candidate = Path.GetFullPath(Path.Combine(fullRoot, normalizedRel));
+        if (!candidate.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return File.Exists(candidate) ? candidate : null;
+    }
+
+    public static void OpenImageZoomWindow(string title, string relativeOrAbsolutePath)
+    {
+        var bitmap = LlmWpfPrototype.Services.Chat.ChatImageAttachmentService.TryLoadBitmap(relativeOrAbsolutePath);
+        if (bitmap is null)
+        {
+            return;
+        }
+
+        ShowZoomableFigureWindow(
+            string.IsNullOrWhiteSpace(title) ? "图片高清预览" : title,
+            bitmap,
+            windowTitlePrefix: "图片高清预览");
+    }
+
+    private static void ShowZoomableFigureWindow(string title, BitmapSource bitmap, string windowTitlePrefix = "高清矢量工程图预览")
+    {
+        var zoomScale = 1.0;
+        var scaleTransform = new ScaleTransform(1.0, 1.0);
+        var zoomImage = new Image
+        {
+            Source = bitmap,
+            Stretch = Stretch.Uniform,
+            MaxWidth = 1040,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            LayoutTransform = scaleTransform
+        };
+        RenderOptions.SetBitmapScalingMode(zoomImage, BitmapScalingMode.HighQuality);
+
+        var scroller = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Background = Brushes.White,
+            Padding = new Thickness(16),
+            Content = zoomImage
+        };
+
+        var zoomLabel = new TextBlock
+        {
+            Text = "100%",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 12, 0),
+            Foreground = BrushFromRgb(15, 90, 153),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 12.5
+        };
+
+        void ApplyZoom(double next)
+        {
+            zoomScale = Math.Clamp(next, 0.5, 3.5);
+            scaleTransform.ScaleX = zoomScale;
+            scaleTransform.ScaleY = zoomScale;
+            zoomLabel.Text = $"{Math.Round(zoomScale * 100):0}%";
+        }
+
+        scroller.PreviewMouseWheel += (_, e) =>
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                e.Handled = true;
+                ApplyZoom(zoomScale + (e.Delta > 0 ? 0.2 : -0.2));
+            }
+        };
+
+        var zoomOutBtn = new System.Windows.Controls.Button { Content = "缩小 -", Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(0, 0, 6, 0) };
+        zoomOutBtn.Click += (_, _) => ApplyZoom(zoomScale - 0.25);
+        var resetBtn = new System.Windows.Controls.Button { Content = "适合窗口 100%", Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(0, 0, 6, 0) };
+        resetBtn.Click += (_, _) => ApplyZoom(1.0);
+        var zoomInBtn = new System.Windows.Controls.Button { Content = "放大 +", Padding = new Thickness(10, 3, 10, 3) };
+        zoomInBtn.Click += (_, _) => ApplyZoom(zoomScale + 0.25);
+
+        var hintLabel = new TextBlock
+        {
+            Text = "提示：按住 Ctrl + 鼠标滚轮可自由缩放 · Esc 关闭窗口",
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = BrushFromRgb(100, 116, 139),
+            FontSize = 12
+        };
+
+        var toolbar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(12, 8, 12, 8)
+        };
+        toolbar.Children.Add(zoomOutBtn);
+        toolbar.Children.Add(resetBtn);
+        toolbar.Children.Add(zoomInBtn);
+        toolbar.Children.Add(zoomLabel);
+        toolbar.Children.Add(hintLabel);
+
+        var layout = new DockPanel();
+        DockPanel.SetDock(toolbar, Dock.Top);
+        layout.Children.Add(toolbar);
+        layout.Children.Add(scroller);
+
+        var previewWindow = new Window
+        {
+            Title = string.IsNullOrWhiteSpace(title) ? windowTitlePrefix : $"{windowTitlePrefix} · {title}",
+            Width = Math.Min(1160, SystemParameters.WorkArea.Width * 0.88),
+            Height = Math.Min(860, SystemParameters.WorkArea.Height * 0.88),
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            Background = BrushFromRgb(248, 250, 252),
+            Content = layout
+        };
+        previewWindow.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+            {
+                previewWindow.Close();
+            }
+        };
+        previewWindow.Show();
+    }
+
     private static Brush BrushFromRgb(byte red, byte green, byte blue)
     {
         var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
@@ -490,6 +970,15 @@ public sealed class RagCitationLabelConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
         value is string id ? RagFormattedText.CitationLabel(id) : string.Empty;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        Binding.DoNothing;
+}
+
+public sealed class LocalKnowledgeAssetPathToBitmapConverter : IValueConverter
+{
+    public object? Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is string relativePath ? RagFormattedText.TryLoadKnowledgeFigureBitmap(relativePath, decodePixelWidth: 680) : null;
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         Binding.DoNothing;

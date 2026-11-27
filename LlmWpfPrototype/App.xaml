@@ -463,5 +463,232 @@
         <Style TargetType="ScrollViewer">
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         </Style>
+
+        <!-- ==================== 高级调试：现代分段胶囊页签、扁平数据表与代码区 ==================== -->
+        <Style x:Key="DebugCompactButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="10,4.5" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="#FF334155" />
+            <Setter Property="Background" Value="#FFFFFFFF" />
+            <Setter Property="BorderBrush" Value="#FFD8E2EC" />
+        </Style>
+
+        <Style x:Key="DebugAccentSoftButtonStyle" TargetType="Button" BasedOn="{StaticResource DebugCompactButtonStyle}">
+            <Setter Property="Background" Value="#FFF0F9FF" />
+            <Setter Property="Foreground" Value="#FF0369A1" />
+            <Setter Property="BorderBrush" Value="#FFBAE6FD" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BtnBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BtnBorder" Property="Background" Value="#FFE0F2FE" />
+                                <Setter TargetName="BtnBorder" Property="BorderBrush" Value="#FF7DD3FC" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="BtnBorder" Property="Background" Value="#FFBAE6FD" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DebugCodeTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="#FFF8FAFC" />
+            <Setter Property="Foreground" Value="#FF1E293B" />
+            <Setter Property="BorderBrush" Value="#FFE2E8F0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="11,9" />
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="AcceptsReturn" Value="True" />
+            <Setter Property="VerticalContentAlignment" Value="Top" />
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+            <Setter Property="SelectionBrush" Value="#FFBAE6FD" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="CodeBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="0"
+                                          Focusable="False" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="CodeBorder" Property="BorderBrush" Value="#FF7DD3FC" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DebugTabControlStyle" TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid KeyboardNavigation.TabNavigation="Local">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0"
+                                    HorizontalAlignment="Left"
+                                    Background="#FFF1F5F9"
+                                    BorderBrush="#FFE2E8F0"
+                                    BorderThickness="1"
+                                    CornerRadius="9"
+                                    Padding="3">
+                                <TabPanel x:Name="HeaderPanel"
+                                          IsItemsHost="True"
+                                          Panel.ZIndex="1"
+                                          KeyboardNavigation.TabIndex="1" />
+                            </Border>
+                            <Border Grid.Row="1"
+                                    Margin="0,10,0,0"
+                                    Background="Transparent"
+                                    BorderThickness="0">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  ContentSource="SelectedContent" />
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DebugTabItemStyle" TargetType="TabItem">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Foreground" Value="#FF64748B" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="Padding" Value="13,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabPill"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="1"
+                                CornerRadius="7"
+                                Margin="1,0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter x:Name="ContentSite"
+                                              ContentSource="Header"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabPill" Property="Background" Value="#FFFFFFFF" />
+                                <Setter TargetName="TabPill" Property="BorderBrush" Value="#FFD8E2EC" />
+                                <Setter Property="Foreground" Value="#FF0369A1" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                    <Condition Property="IsSelected" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="TabPill" Property="Background" Value="#FFE2E8F0" />
+                                <Setter Property="Foreground" Value="#FF1E293B" />
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DebugDataGridStyle" TargetType="DataGrid">
+            <Setter Property="Background" Value="#FFFFFFFF" />
+            <Setter Property="Foreground" Value="#FF1E293B" />
+            <Setter Property="BorderBrush" Value="#FFE2E8F0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="RowBackground" Value="#FFFFFFFF" />
+            <Setter Property="AlternatingRowBackground" Value="#FFFAFCFF" />
+            <Setter Property="HorizontalGridLinesBrush" Value="#FFF1F5F9" />
+            <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
+            <Setter Property="RowHeight" Value="30" />
+            <Setter Property="ColumnHeaderHeight" Value="32" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="CanUserResizeRows" Value="False" />
+            <Setter Property="ColumnHeaderStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridColumnHeader">
+                        <Setter Property="Background" Value="#FFF8FAFC" />
+                        <Setter Property="Foreground" Value="#FF475569" />
+                        <Setter Property="FontWeight" Value="SemiBold" />
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="Padding" Value="10,0" />
+                        <Setter Property="BorderBrush" Value="#FFE2E8F0" />
+                        <Setter Property="BorderThickness" Value="0,0,0,1" />
+                        <Setter Property="HorizontalContentAlignment" Value="Left" />
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="CellStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridCell">
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="Padding" Value="10,0" />
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="DataGridCell">
+                                    <Border Padding="{TemplateBinding Padding}"
+                                            Background="{TemplateBinding Background}">
+                                        <ContentPresenter VerticalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#FFE0F2FE" />
+                                <Setter Property="Foreground" Value="#FF0F172A" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="RowStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FFF0F9FF" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Resources>
 </Application>

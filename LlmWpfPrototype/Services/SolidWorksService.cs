@@ -16,8 +16,6 @@ namespace LlmWpfPrototype.Services;
 public sealed partial class SolidWorksService : ISolidWorksService
 {
     private const string ProgId = "SldWorks.Application";
-    private const string InitialInspectionCarAssemblyPath =
-        @"E:\反力架\反力架\三六重工v2\不伸缩单层检查车\Solidworks模型\初始模型\总装配\总装配体.SLDASM";
 
     private static readonly TimeSpan StartupWait = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions ScanJsonOptions = new()
@@ -29,8 +27,13 @@ public sealed partial class SolidWorksService : ISolidWorksService
     private readonly string _initialModelFolder;
     private string _workingModelFolder;
     private SldWorks? _swApp;
+    private string _lastOpenFailureMessage = string.Empty;
 
     public string WorkingModelFolder => _workingModelFolder;
+
+    public string LastOpenFailureMessage => Volatile.Read(ref _lastOpenFailureMessage);
+
+    public string GetLastOpenFailureMessage() => LastOpenFailureMessage;
 
     public void SetWorkingModelFolder(string? workingModelFolder)
     {
@@ -132,13 +135,24 @@ public sealed partial class SolidWorksService : ISolidWorksService
             }
 
             var activeDocument = application.ActiveDoc as IModelDoc2;
-            if (activeDocument is null)
+            if (activeDocument is not null)
             {
-                return false;
+                activeDocumentPath = NormalizePathSafe(activeDocument.GetPathName());
+                if (!string.IsNullOrWhiteSpace(activeDocumentPath))
+                {
+                    return true;
+                }
             }
 
-            activeDocumentPath = NormalizeFilePath(activeDocument.GetPathName() ?? string.Empty);
-            return !string.IsNullOrWhiteSpace(activeDocumentPath);
+            // If ActiveDoc is empty (e.g. welcome tab or unfocused window) while the working assembly is open in session, report it.
+            var openWorkingAssembly = FindOpenWorkingAssemblyInSession(application, expectedPath: null);
+            if (openWorkingAssembly is not null)
+            {
+                activeDocumentPath = NormalizePathSafe(openWorkingAssembly.GetPathName());
+                return !string.IsNullOrWhiteSpace(activeDocumentPath);
+            }
+
+            return false;
         }
         catch
         {
@@ -169,8 +183,12 @@ public sealed partial class SolidWorksService : ISolidWorksService
 
         try
         {
-            var success = TryGetOrCreateApplication(allowCreate: true, logWriter, out _);
+            var success = TryGetOrCreateApplication(allowCreate: true, logWriter, out _, cancellationToken);
             return Task.FromResult(success);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -198,37 +216,81 @@ public sealed partial class SolidWorksService : ISolidWorksService
         if (!IsCadThread)
             return await RunCadCommandAsync(() => OpenAssemblyAsync(assemblyPath, logWriter, cancellationToken), cancellationToken);
         _assemblyComponentIndex = null;
+        Volatile.Write(ref _lastOpenFailureMessage, string.Empty);
         cancellationToken.ThrowIfCancellationRequested();
 
         try
         {
             if (!ValidateExistingFile(assemblyPath, logWriter, "装配体"))
             {
+                Volatile.Write(ref _lastOpenFailureMessage, $"未找到目标工作装配体文件：{Path.GetFileName(assemblyPath)}，请确认工作区副本完整。");
                 return false;
             }
 
             WriteLog(logWriter, $"请求打开路径：{assemblyPath}");
+            logWriter?.Invoke("[Progress] 正在连接或启动 SolidWorks...");
 
             if (!await EnsureSolidWorksAsync(logWriter, cancellationToken))
             {
                 WriteLog(logWriter, "启动或连接 SolidWorks 失败。");
+                var diag = ReadSessionDiagnosticsCore();
+                Volatile.Write(
+                    ref _lastOpenFailureMessage,
+                    diag.State == SolidWorksSessionState.ProcessRunningComUnavailable
+                        ? $"{diag.DetailMessage}请先关闭旧的 SolidWorks 窗口后，再发送“打开当前模型”。"
+                        : "启动或连接 SolidWorks 失败，请确认本机 SolidWorks 可正常启动且与当前程序权限一致。");
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             await WaitForSolidWorksStartupAsync(logWriter, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             var isWorkingAssembly = !string.IsNullOrWhiteSpace(_workingModelFolder) &&
                 WorkspaceSafetyPolicy.Within(assemblyPath, _workingModelFolder);
             if (isWorkingAssembly)
             {
                 var app = _swApp ?? throw new InvalidOperationException("SolidWorks 连接已断开。");
-                var openAssemblies = GetOpenDocuments(app).Select(doc => NormalizeFilePath(doc.GetPathName()))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                CadReferenceBoundary.RebindWorkingAssembly(assemblyPath, _workingModelFolder, _initialModelFolder,
-                    owner => app.GetDocumentDependencies2(owner, false, false, false),
-                    (owner, oldPath, newPath) => app.ReplaceReferencedDocument(owner, oldPath, newPath),
-                    openAssemblies.Contains, message => WriteLog(logWriter, message));
+                if (!TryCloseConflictingExternalDocumentsForWorkingAssembly(app, assemblyPath, logWriter, cancellationToken, out var conflictReason))
+                {
+                    Volatile.Write(ref _lastOpenFailureMessage, conflictReason);
+                    WriteLog(logWriter, conflictReason);
+                    return false;
+                }
+
+                if (CadReferenceBoundary.TryValidateRebindCache(
+                        assemblyPath,
+                        _workingModelFolder,
+                        _initialModelFolder,
+                        out var cachedAssemblyCount,
+                        message => WriteLog(logWriter, message)))
+                {
+                    WriteLog(logWriter, $"命中工作区装配引用校验缓存（共 {cachedAssemblyCount} 个装配体均未变动），跳过重复重绑，直接打开工作总装配。");
+                    logWriter?.Invoke("[Progress] 工作区引用校验缓存命中，正在直接打开工作总装配体...");
+                }
+                else
+                {
+                    logWriter?.Invoke("[Progress] 正在校验并重绑工作区装配引用...");
+                    var openAssemblies = GetOpenDocuments(app).Select(doc => NormalizeFilePath(doc.GetPathName()))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var reboundCount = CadReferenceBoundary.RebindWorkingAssembly(assemblyPath, _workingModelFolder, _initialModelFolder,
+                        owner => app.GetDocumentDependencies2(owner, false, false, false),
+                        (owner, oldPath, newPath) => app.ReplaceReferencedDocument(owner, oldPath, newPath),
+                        openAssemblies.Contains, message => WriteLog(logWriter, message),
+                        cancellationToken,
+                        (current, total, fileName) =>
+                        {
+                            if (current == 1 || current == total || current % 5 == 0)
+                            {
+                                logWriter?.Invoke($"[Progress] 正在重绑工作区装配引用 ({current}/{total})：{fileName}");
+                            }
+                        });
+                    CadReferenceBoundary.WriteRebindCache(assemblyPath, _workingModelFolder, reboundCount, message => WriteLog(logWriter, message));
+                }
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            logWriter?.Invoke("[Progress] 正在 SolidWorks 中打开工作总装配体...");
 
             if (TryActivateOpenedDocument(assemblyPath, logWriter))
             {
@@ -246,8 +308,10 @@ public sealed partial class SolidWorksService : ISolidWorksService
                 return true;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (!await TryOpenDocumentByUiAutomationAsync(assemblyPath, logWriter, cancellationToken))
             {
+                Volatile.Write(ref _lastOpenFailureMessage, "已连接 SolidWorks，但未能成功打开当前项目的工作总装配体；请确认 SolidWorks 窗口没有未关闭的弹窗或文件被占用。");
                 return false;
             }
 
@@ -258,10 +322,18 @@ public sealed partial class SolidWorksService : ISolidWorksService
             }
 
             WriteLog(logWriter, $"已执行打开操作，但尚未确认目标装配体已加载：{assemblyPath}");
+            Volatile.Write(ref _lastOpenFailureMessage, "已触发打开操作，但未在 SolidWorks 中确认目标工作装配体加载成功，请检查 SolidWorks 窗口是否有提示弹窗。");
             return false;
+        }
+        catch (OperationCanceledException)
+        {
+            Volatile.Write(ref _lastOpenFailureMessage, "已取消打开 SolidWorks 工作模型。");
+            WriteLog(logWriter, "已取消打开 SolidWorks 装配体操作。");
+            throw;
         }
         catch (Exception ex)
         {
+            Volatile.Write(ref _lastOpenFailureMessage, BuildFriendlyOpenAssemblyFailureMessage(ex));
             WriteException(logWriter, "打开 SolidWorks 装配体失败。", ex);
             return false;
         }
@@ -1819,10 +1891,15 @@ public sealed partial class SolidWorksService : ISolidWorksService
         return featureName ?? string.Empty;
     }
 
-    private bool TryGetOrCreateApplication(bool allowCreate, Action<string>? logWriter, out SldWorks? application)
+    private bool TryGetOrCreateApplication(
+        bool allowCreate,
+        Action<string>? logWriter,
+        out SldWorks? application,
+        CancellationToken cancellationToken = default)
     {
         lock (_syncRoot)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_swApp is not null && TryConfigureApplication(_swApp, logWriter))
             {
                 application = _swApp;
@@ -1851,7 +1928,8 @@ public sealed partial class SolidWorksService : ISolidWorksService
                 return false;
             }
 
-            var createdInstance = CreateNewInstance(logWriter);
+            cancellationToken.ThrowIfCancellationRequested();
+            var createdInstance = CreateNewInstance(logWriter, cancellationToken);
             if (createdInstance is null)
             {
                 application = null;
@@ -2259,35 +2337,8 @@ public sealed partial class SolidWorksService : ISolidWorksService
         }
     }
 
-    private static bool TryGetActiveInstance(Action<string>? logWriter, out SldWorks? activeInstance)
-    {
-        activeInstance = null;
-
-        try
-        {
-            if (!TryGetProgIdClsid(out var clsid))
-            {
-                WriteLog(logWriter, $"未找到 ProgID：{ProgId}");
-                return false;
-            }
-
-            var result = GetActiveObject(ref clsid, IntPtr.Zero, out var activeObject);
-            if (result == 0 && activeObject is SldWorks swApp)
-            {
-                activeInstance = swApp;
-                return true;
-            }
-
-            WriteLog(logWriter, $"未连接到现有 SolidWorks 实例，HRESULT=0x{result:X8}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            WriteException(logWriter, "连接现有 SolidWorks 实例失败。", ex);
-            activeInstance = null;
-            return false;
-        }
-    }
+    private bool TryGetActiveInstance(Action<string>? logWriter, out SldWorks? activeInstance)
+        => TryAttachActiveInstanceMultiPath(logWriter, out activeInstance);
 
     private bool TryGetRunningApplication(out SldWorks? application)
     {
@@ -2323,18 +2374,46 @@ public sealed partial class SolidWorksService : ISolidWorksService
         return false;
     }
 
-    private static SldWorks? CreateNewInstance(Action<string>? logWriter)
+    private SldWorks? CreateNewInstance(Action<string>? logWriter, CancellationToken cancellationToken = default)
     {
-        try
+        var interactiveInstance = TryLaunchInteractiveSolidWorksAndAttach(logWriter, cancellationToken);
+        if (interactiveInstance is not null)
         {
-            WriteLog(logWriter, $"正在通过 CreateObject 创建 SolidWorks 实例：{ProgId}");
-            return (SldWorks)Interaction.CreateObject(ProgId);
+            return interactiveInstance;
         }
-        catch (Exception ex)
+
+        cancellationToken.ThrowIfCancellationRequested();
+        Exception? lastException = null;
+        foreach (var candidateProgId in EnumerateSolidWorksProgIds())
         {
-            WriteException(logWriter, "创建新的 SolidWorks 实例失败。", ex);
-            return null;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!TryGetProgIdClsid(candidateProgId, out _))
+            {
+                continue;
+            }
+
+            try
+            {
+                WriteLog(logWriter, $"正在通过 CreateObject 创建 SolidWorks 实例：{candidateProgId}");
+                if (Interaction.CreateObject(candidateProgId) is SldWorks created)
+                {
+                    WriteLog(logWriter, $"已通过 {candidateProgId} 创建 SolidWorks 实例。");
+                    return created;
+                }
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                WriteLog(logWriter, $"通过 {candidateProgId} 创建 SolidWorks 实例失败：{ex.Message}");
+            }
         }
+
+        if (lastException is not null)
+        {
+            WriteException(logWriter, "创建新的 SolidWorks 实例失败（已尝试本机全部已注册版本）。", lastException);
+        }
+
+        return null;
     }
 
     private static bool TryConfigureApplication(SldWorks application, Action<string>? logWriter)
@@ -2355,15 +2434,13 @@ public sealed partial class SolidWorksService : ISolidWorksService
 
     private static string? ResolveInitialInspectionCarAssemblyPath(Action<string>? logWriter)
     {
-        var directoryPath = Path.GetDirectoryName(InitialInspectionCarAssemblyPath) ?? string.Empty;
-        var directoryExists = Directory.Exists(directoryPath);
-        var fileExists = File.Exists(InitialInspectionCarAssemblyPath);
-
+        var resolvedPath = WorkspacePathResolver.ResolveInitialAssemblyPath();
+        var fileExists = !string.IsNullOrWhiteSpace(resolvedPath) && File.Exists(resolvedPath);
         WriteLog(
             logWriter,
-            $"路径诊断：DirectoryExists={directoryExists}，FileExists={fileExists}，Path={InitialInspectionCarAssemblyPath}");
+            $"路径诊断：FileExists={fileExists}，Path={resolvedPath ?? "(未找到初始模型装配体)"}");
 
-        return fileExists ? InitialInspectionCarAssemblyPath : null;
+        return fileExists ? resolvedPath : null;
     }
 
     private static bool TrySetClipboardText(string text, Action<string>? logWriter)
